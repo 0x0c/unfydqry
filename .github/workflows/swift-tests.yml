@@ -55,6 +55,7 @@ jobs:
         run: |
           set -eux
           cargo run --bin uniffi-bindgen -- generate \
+            --no-format \
             --library target/aarch64-apple-darwin/release/libunfydqry.dylib \
             --language swift \
             --out-dir generated/swift
