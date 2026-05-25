@@ -78,8 +78,8 @@ Pods/
 android/jniLibs/
 android/sample/app/src/main/jniLibs/
 
-# Generated Kotlin binding (copied from core/generated/)
-android/sample/app/src/main/java/uniffi/
+# Kotlin binding for :searchcore module is committed (mirror of iOS Sources/SearchCore/),
+# so the module is consumable without the Rust toolchain. Do NOT ignore it.
 
 # Gradle / AGP outputs
 android/sample/.gradle/
