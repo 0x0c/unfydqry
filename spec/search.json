@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "index_then_search_returns_the_doc",
+      "description": "Single index call is immediately retrievable by a substring query (LIKE path, 2-char query).",
+      "ops": [{"op": "index", "id": 42, "text": "東京タワー"}],
+      "assertions": [
+        {"search": {"query": "東京", "limit": 10}, "expected_ids": [42]}
+      ]
+    },
+    {
+      "id": "reindex_replaces_text",
+      "description": "Re-indexing the same id with new text replaces the previous content; the old text becomes unfindable and the new text is hit by its query.",
+      "ops": [
+        {"op": "index", "id": 1, "text": "おおさか"},
+        {"op": "index", "id": 1, "text": "なごや"}
+      ],
+      "assertions": [
+        {"search": {"query": "おおさか", "limit": 10}, "expected_ids": []},
+        {"search": {"query": "なごや",   "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "remove_makes_doc_unfindable",
+      "description": "After remove(id), the previously indexed text is no longer returned by any query that used to hit it.",
+      "ops": [
+        {"op": "index",  "id": 7, "text": "とうきょう"},
+        {"op": "remove", "id": 7}
+      ],
+      "assertions": [
+        {"search": {"query": "とうきょう", "limit": 10}, "expected_ids": []}
+      ]
+    },
+    {
+      "id": "removing_missing_id_is_no_op",
+      "description": "remove(id) on an id that was never indexed must not throw and must not affect subsequent searches.",
+      "ops": [{"op": "remove", "id": 999}],
+      "assertions": [
+        {"search": {"query": "anything", "limit": 10}, "expected_ids": []}
+      ]
+    },
+    {
+      "id": "indexing_empty_string_is_allowed",
+      "description": "Indexing an empty text must not throw; the doc simply doesn't match any query.",
+      "ops": [{"op": "index", "id": 1, "text": ""}],
+      "assertions": [
+        {"search": {"query": "anything", "limit": 10}, "expected_ids": []}
+      ]
+    },
+    {
+      "id": "multiple_docs_are_all_stored",
+      "description": "Indexing 10 different docs that all contain the same word returns the complete id set when queried.",
+      "ops": [
+        {"op": "index", "id": 1,  "text": "doc 1 about coffee"},
+        {"op": "index", "id": 2,  "text": "doc 2 about coffee"},
+        {"op": "index", "id": 3,  "text": "doc 3 about coffee"},
+        {"op": "index", "id": 4,  "text": "doc 4 about coffee"},
+        {"op": "index", "id": 5,  "text": "doc 5 about coffee"},
+        {"op": "index", "id": 6,  "text": "doc 6 about coffee"},
+        {"op": "index", "id": 7,  "text": "doc 7 about coffee"},
+        {"op": "index", "id": 8,  "text": "doc 8 about coffee"},
+        {"op": "index", "id": 9,  "text": "doc 9 about coffee"},
+        {"op": "index", "id": 10, "text": "doc 10 about coffee"}
+      ],
+      "assertions": [
+        {"search": {"query": "coffee", "limit": 100}, "expected_ids": [1,2,3,4,5,6,7,8,9,10]}
+      ]
+    },
+    {
+      "id": "katakana_query_hits_hiragana_doc",
+      "description": "Normalization runs on both the indexed text and the query, so a katakana query hits a hiragana document with identical phonetic content.",
+      "ops": [{"op": "index", "id": 1, "text": "とうきょうタワー"}],
+      "assertions": [
+        {"search": {"query": "トウキョウ", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "hiragana_query_hits_kanji_mixed_doc",
+      "description": "Hiragana query hits a doc whose normalized text contains the same hiragana (after halfwidth katakana → hiragana fold). Kanji 東京 doesn't help — the hit comes from the ﾄｳｷｮｳ portion.",
+      "ops": [{"op": "index", "id": 1, "text": "東京 ﾄｳｷｮｳ タワー"}],
+      "assertions": [
+        {"search": {"query": "とうきょう", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "halfwidth_katakana_query_hits_fullwidth_doc",
+      "description": "Halfwidth katakana ﾄｳｷｮｳ folds via NFKC to fullwidth and then to hiragana — same key as the indexed fullwidth katakana.",
+      "ops": [{"op": "index", "id": 1, "text": "トウキョウ ドーム"}],
+      "assertions": [
+        {"search": {"query": "ﾄｳｷｮｳ", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "fullwidth_latin_doc_hits_halfwidth_query",
+      "description": "Fullwidth Latin in the indexed doc folds to ASCII; an ASCII (halfwidth) query then hits.",
+      "ops": [{"op": "index", "id": 1, "text": "Ｐｙｔｈｏｎ 入門"}],
+      "assertions": [
+        {"search": {"query": "python", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "uppercase_query_hits_lowercase_doc",
+      "description": "Both sides lowercase, so an uppercase ASCII query hits a lowercase ASCII doc.",
+      "ops": [{"op": "index", "id": 1, "text": "hello world"}],
+      "assertions": [
+        {"search": {"query": "HELLO", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "dakuten_query_does_not_hit_unvoiced",
+      "description": "Dakuten is preserved (not folded), so a voiced query only matches voiced documents and vice versa. がっこう and かっこう must not collide.",
+      "ops": [
+        {"op": "index", "id": 1, "text": "がっこうあるある"},
+        {"op": "index", "id": 2, "text": "かっこうあるある"}
+      ],
+      "assertions": [
+        {"search": {"query": "がっこう", "limit": 10}, "expected_ids": [1]},
+        {"search": {"query": "かっこう", "limit": 10}, "expected_ids": [2]}
+      ]
+    },
+    {
+      "id": "empty_query_returns_empty",
+      "description": "Empty query short-circuits to empty result without scanning the index.",
+      "ops": [{"op": "index", "id": 1, "text": "anything"}],
+      "assertions": [
+        {"search": {"query": "", "limit": 10}, "expected_ids": []}
+      ]
+    },
+    {
+      "id": "one_char_query_uses_like_fallback",
+      "description": "A 1-char query is below the trigram tokenizer threshold and goes through the LIKE substring fallback path.",
+      "ops": [
+        {"op": "index", "id": 1, "text": "がっこう"},
+        {"op": "index", "id": 2, "text": "かばん"}
+      ],
+      "assertions": [
+        {"search": {"query": "が", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "two_char_query_uses_like_fallback",
+      "description": "A 2-char query is still below the trigram threshold — LIKE substring fallback path.",
+      "ops": [
+        {"op": "index", "id": 1, "text": "がっこう"},
+        {"op": "index", "id": 2, "text": "かばん"}
+      ],
+      "assertions": [
+        {"search": {"query": "がっ", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "three_char_query_uses_fts5",
+      "description": "A 3-char query goes through the FTS5 trigram path and hits when the substring is present (id-set check only; the score check stays language-specific).",
+      "ops": [{"op": "index", "id": 1, "text": "がっこう"}],
+      "assertions": [
+        {"search": {"query": "がっこ", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "quote_in_query_is_escaped",
+      "description": "An FTS5 phrase wrapper escapes embedded double-quotes so a literal quote in the query still matches a doc that contains it.",
+      "ops": [{"op": "index", "id": 1, "text": "say \"hello\" world"}],
+      "assertions": [
+        {"search": {"query": "\"hello\"", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "kanji_cannot_be_queried_by_yomi",
+      "description": "By design the engine carries no dictionary, so kanji and its yomi (e.g. 東京 vs とうきょう) are distinct keys. A yomi-only query must NOT hit a kanji-only document.",
+      "ops": [{"op": "index", "id": 1, "text": "東京タワー"}],
+      "assertions": [
+        {"search": {"query": "とうきょう", "limit": 10}, "expected_ids": []}
+      ]
+    }
+  ],
+  "seeded_matrices": [
+    {
+      "id": "sample_app_seed",
+      "description": "The 8-document corpus indexed by both sample apps. Multiple queries exercise the cross-script normalization and the dakuten distinction against the same shared seed.",
+      "limit": 50,
+      "seed": [
+        {"op": "index", "id": 1, "text": "東京タワー"},
+        {"op": "index", "id": 2, "text": "とうきょうスカイツリー"},
+        {"op": "index", "id": 3, "text": "ﾄｳｷｮｳ ﾄﾞｰﾑ"},
+        {"op": "index", "id": 4, "text": "Osaka 城"},
+        {"op": "index", "id": 5, "text": "がっこう ぐらし"},
+        {"op": "index", "id": 6, "text": "かっこう の歌"},
+        {"op": "index", "id": 7, "text": "Ｐｙｔｈｏｎ 入門"},
+        {"op": "index", "id": 8, "text": "ぱんだ と ﾊﾟﾝﾀﾞ"}
+      ],
+      "queries": [
+        {
+          "query": "とうきょう",
+          "description": "Hiragana query hits both the hiragana doc (id 2) and the halfwidth-katakana doc (id 3) via kana folding.",
+          "expected_ids": [2, 3]
+        },
+        {
+          "query": "トウキョウ",
+          "description": "Fullwidth katakana resolves to the same key set as とうきょう.",
+          "expected_ids": [2, 3]
+        },
+        {
+          "query": "python",
+          "description": "ASCII python hits the fullwidth Ｐｙｔｈｮｮｮｮ doc via NFKC + lowercase folding.",
+          "expected_ids": [7]
+        },
+        {
+          "query": "ｐｙｔｈｏｎ",
+          "description": "Fullwidth Latin query resolves to the same hit set as ASCII python.",
+          "expected_ids": [7]
+        },
+        {
+          "query": "ぱんだ",
+          "description": "Hiragana ぱ (handakuten) hits the doc with ﾊﾟ — halfwidth handakuten composes via NFKC.",
+          "expected_ids": [8]
+        },
+        {
+          "query": "ﾊﾟﾝﾀﾞ",
+          "description": "Halfwidth katakana with handakuten/dakuten hits the same doc set as ぱんだ.",
+          "expected_ids": [8]
+        },
+        {
+          "query": "がっこう",
+          "description": "Voiced query that must hit only the voiced doc — kept distinct from かっこう.",
+          "expected_ids": [5]
+        },
+        {
+          "query": "かっこう",
+          "description": "Unvoiced query — must hit only the unvoiced doc.",
+          "expected_ids": [6]
+        },
+        {
+          "query": "osaka",
+          "description": "ASCII lower-case query hits 'Osaka 城' via title-case folding.",
+          "expected_ids": [4]
+        },
+        {
+          "query": "存在しない",
+          "description": "Query with no matching substring in the seed must return an empty hit set.",
+          "expected_ids": []
+        }
+      ]
+    }
+  ]
+}

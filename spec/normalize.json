@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "empty",
+      "description": "Empty input must stay empty (no implicit insertion).",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "id": "ascii_lower_passthrough",
+      "description": "Pure ASCII lowercase passes through untouched.",
+      "input": "abc xyz",
+      "expected": "abc xyz"
+    },
+    {
+      "id": "kanji_passthrough",
+      "description": "Kanji are not in any folding axis; they pass through unchanged.",
+      "input": "東京都千代田区",
+      "expected": "東京都千代田区"
+    },
+    {
+      "id": "hiragana_passthrough_without_dakuten",
+      "description": "Hiragana without dakuten passes through unchanged.",
+      "input": "あいうえお",
+      "expected": "あいうえお"
+    },
+    {
+      "id": "long_vowel_mark_passthrough",
+      "description": "Choonpu U+30FC (used by both katakana and hiragana) is preserved when the surrounding katakana is mapped to hiragana.",
+      "input": "コーヒー",
+      "expected": "こーひー"
+    },
+    {
+      "id": "ascii_upper_folds_to_lower",
+      "description": "Latin uppercase folds to lowercase via char::to_lowercase.",
+      "input": "ABC",
+      "expected": "abc"
+    },
+    {
+      "id": "mixed_case_folds_to_lower",
+      "description": "Mixed-case ASCII (incl. spaces) folds entirely to lowercase.",
+      "input": "Hello World",
+      "expected": "hello world"
+    },
+    {
+      "id": "p_variant_fullwidth_upper",
+      "description": "Fullwidth uppercase Ｐ normalizes via NFKC + lowercase to ASCII p.",
+      "input": "Ｐ",
+      "expected": "p"
+    },
+    {
+      "id": "p_variant_halfwidth_upper",
+      "description": "Halfwidth uppercase P lowercases to p.",
+      "input": "P",
+      "expected": "p"
+    },
+    {
+      "id": "p_variant_fullwidth_lower",
+      "description": "Fullwidth lowercase ｐ normalizes via NFKC to ASCII p.",
+      "input": "ｐ",
+      "expected": "p"
+    },
+    {
+      "id": "p_variant_halfwidth_lower",
+      "description": "Halfwidth lowercase p passes through (identity).",
+      "input": "p",
+      "expected": "p"
+    },
+    {
+      "id": "fullwidth_alpha_word",
+      "description": "Fullwidth Latin word (Ｐｙｔｈｮｮｮｮ) folds through NFKC + lowercase to ASCII python.",
+      "input": "Ｐｙｔｈｏｎ",
+      "expected": "python"
+    },
+    {
+      "id": "fullwidth_digits",
+      "description": "Fullwidth digits ０-９ fold to halfwidth ASCII via NFKC.",
+      "input": "１２３",
+      "expected": "123"
+    },
+    {
+      "id": "fullwidth_symbols",
+      "description": "NFKC folds fullwidth punctuation to its halfwidth ASCII equivalents.",
+      "input": "!?",
+      "expected": "!?"
+    },
+    {
+      "id": "kana_unvoiced_ka_fullwidth",
+      "description": "Fullwidth katakana カ maps to hiragana か (kana-variant fold).",
+      "input": "カ",
+      "expected": "か"
+    },
+    {
+      "id": "kana_unvoiced_ka_hiragana",
+      "description": "Hiragana か is the canonical form (identity).",
+      "input": "か",
+      "expected": "か"
+    },
+    {
+      "id": "kana_unvoiced_ka_halfwidth",
+      "description": "Halfwidth katakana ｶ normalizes via NFKC to fullwidth カ then to hiragana か.",
+      "input": "ｶ",
+      "expected": "か"
+    },
+    {
+      "id": "kana_voiced_ga_fullwidth",
+      "description": "Fullwidth katakana ガ maps to hiragana が; dakuten is preserved (kept distinct from か).",
+      "input": "ガ",
+      "expected": "が",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_voiced_ga_hiragana",
+      "description": "Hiragana が is the canonical form (identity).",
+      "input": "が",
+      "expected": "が",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_voiced_ga_halfwidth",
+      "description": "Halfwidth katakana ｶ + dakuten ﾞ composes via NFKC into single ガ, then katakana→hiragana yields が. Dakuten is preserved.",
+      "input": "ｶﾞ",
+      "expected": "が",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_handakuten_pa_fullwidth",
+      "description": "Fullwidth katakana パ maps to hiragana ぱ; handakuten is preserved.",
+      "input": "パ",
+      "expected": "ぱ",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_handakuten_pa_hiragana",
+      "description": "Hiragana ぱ is the canonical form (identity).",
+      "input": "ぱ",
+      "expected": "ぱ",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_handakuten_pa_halfwidth",
+      "description": "Halfwidth katakana ﾊ + handakuten ﾟ composes via NFKC into single パ, then katakana→hiragana yields ぱ.",
+      "input": "ﾊﾟ",
+      "expected": "ぱ",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_vu_fullwidth",
+      "description": "Fullwidth katakana ヴ (U+30F4) maps to hiragana ゔ (U+3094) via the -0x60 katakana→hiragana shift.",
+      "input": "ヴ",
+      "expected": "ゔ",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "kana_vu_halfwidth",
+      "description": "Halfwidth ｳ + dakuten ﾞ composes via NFKC into ヴ, then yields ゔ.",
+      "input": "ｳﾞ",
+      "expected": "ゔ",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "combining_dakuten_composes_to_single_char",
+      "description": "Hiragana か U+304B + combining dakuten U+3099 composes via NFKC into precomposed が U+304C.",
+      "input": "が",
+      "expected": "が"
+    },
+    {
+      "id": "halfwidth_katakana_plus_halfwidth_dakuten_combine",
+      "description": "Halfwidth ｶ U+FF76 + halfwidth dakuten ﾞ U+FF9E composes via NFKC into fullwidth ガ then yields が.",
+      "input": "ｶﾞ",
+      "expected": "が"
+    },
+    {
+      "id": "mixed_kanji_halfwidth_katakana_latin",
+      "description": "Whole-string fixture from the design doc: kanji passes through, halfwidth katakana becomes hiragana, Latin lowercases.",
+      "input": "東京 ﾄｳｷｮｳ Tokyo",
+      "expected": "東京 とうきょう tokyo",
+      "source": "design-doc §2.2"
+    },
+    {
+      "id": "mixed_query_with_dakuten",
+      "description": "Halfwidth katakana sequence with dakuten ｶﾞｯｺｳ resolves through NFKC + kana fold to がっこう, and Latin token lowercases.",
+      "input": "ｶﾞｯｺｳ school",
+      "expected": "がっこう school"
+    },
+    {
+      "id": "emoji_passthrough",
+      "description": "Emoji (outside NFKC compatibility tables) pass through unchanged.",
+      "input": "🍣🍺",
+      "expected": "🍣🍺"
+    },
+    {
+      "id": "surrogate_pair_kanji_passthrough",
+      "description": "Extension kanji like 𠮷 U+20BB7 (encoded as a UTF-16 surrogate pair on the consumer side) pass through unchanged.",
+      "input": "𠮷野家",
+      "expected": "𠮷野家"
+    },
+    {
+      "id": "whitespace_preserved",
+      "description": "ASCII whitespace runs are preserved verbatim (not collapsed).",
+      "input": "  a  b  ",
+      "expected": "  a  b  "
+    },
+    {
+      "id": "fullwidth_space_converted",
+      "description": "Fullwidth space U+3000 normalizes to ASCII space via NFKC.",
+      "input": "あ　い",
+      "expected": "あ い"
+    }
+  ]
+}
