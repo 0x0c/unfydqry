@@ -32,6 +32,9 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.11.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Spec JSON ローダ用。Kotlin の data class へ素直にデコードできる Jackson の
+    // Kotlin モジュールを使う(serialization プラグインの追加なしで済む)。
+    testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
 }
 
 tasks.test {
@@ -42,6 +45,12 @@ tasks.test {
         "../../core/target/aarch64-apple-darwin/release"
     ).asFile.absolutePath
     systemProperty("jna.library.path", dylibDir)
+
+    // 共有 spec ディレクトリの絶対パスを system property で渡す
+    // (Swift / Rust 側と同じ JSON を参照させるため)。
+    val specDir = rootProject.layout.projectDirectory.dir("../../spec").asFile.absolutePath
+    systemProperty("unfydqry.spec.dir", specDir)
+
     testLogging {
         events("passed", "skipped", "failed")
         showStandardStreams = false

@@ -10,117 +10,35 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import uniffi.unfydqry.SearchEngine
 
-@DisplayName("SearchEngine query semantics")
+/**
+ * `SearchEngine` の **言語固有・非データ駋動** な性質をチェックする。
+ *
+ * 入力→ヒット ID の素朴な対は `spec/search.json` と `SpecDrivenTest` 側に寄せて
+ * あるので、ここに残るのは:
+ *   - score の sanity(LIKE 経路は 0、FTS5 経路は有限の非ゼロ)
+ *   - 順序(bm25 昇順)
+ *   - limit のカウント(どの ID が来るかは非決定)
+ *   - 例外を出さないことの確認(FTS5 予約文字、空白だけのクエリ)
+ *   - 並行検索(Mutex<Connection> 経由の直列化が落ちないこと)
+ */
+@DisplayName("SearchEngine query (native-only)")
 class SearchEngineQueryTest {
     private fun fresh() = SearchEngine(":memory:")
-
-    // MARK: - Normalization end-to-end
-
-    @Test fun `katakana query hits hiragana doc`() {
-        val e = fresh()
-        e.index(1, "とうきょうタワー")
-        assertEquals(listOf(1L), e.search("トウキョウ", 10u).map { it.id })
-    }
-
-    @Test fun `hiragana query hits kanji-mixed doc`() {
-        val e = fresh()
-        e.index(1, "東京 ﾄｳｷｮｳ タワー")
-        assertEquals(listOf(1L), e.search("とうきょう", 10u).map { it.id })
-    }
-
-    @Test fun `halfwidth katakana query hits fullwidth doc`() {
-        val e = fresh()
-        e.index(1, "トウキョウ ドーム")
-        assertEquals(listOf(1L), e.search("ﾄｳｷｮｳ", 10u).map { it.id })
-    }
-
-    @Test fun `fullwidth latin doc hits halfwidth query`() {
-        val e = fresh()
-        e.index(1, "Ｐｙｔｈｏｎ 入門")
-        assertEquals(listOf(1L), e.search("python", 10u).map { it.id })
-    }
-
-    @Test fun `uppercase query hits lowercase doc`() {
-        val e = fresh()
-        e.index(1, "hello world")
-        assertEquals(listOf(1L), e.search("HELLO", 10u).map { it.id })
-    }
-
-    // MARK: - Dakuten distinction
-
-    @Test fun `dakuten query does not hit unvoiced doc`() {
-        val e = fresh()
-        e.index(1, "がっこうあるある")
-        e.index(2, "かっこうあるある")
-        assertEquals(listOf(1L), e.search("がっこう", 10u).map { it.id })
-    }
-
-    @Test fun `unvoiced query does not hit dakuten doc`() {
-        val e = fresh()
-        e.index(1, "がっこうあるある")
-        e.index(2, "かっこうあるある")
-        assertEquals(listOf(2L), e.search("かっこう", 10u).map { it.id })
-    }
-
-    // MARK: - Empty / trivial query
-
-    @Test fun `empty query returns empty`() {
-        val e = fresh()
-        e.index(1, "anything")
-        assertTrue(e.search("", 10u).isEmpty())
-    }
-
-    @Test fun `whitespace only query does not crash`() {
-        val e = fresh()
-        e.index(1, "anything")
-        // 1文字相当 → LIKE 経路、結果はあってもなくても落ちない。
-        val hits = e.search(" ", 10u)
-        assertTrue(hits.size >= 0)
-    }
-
-    // MARK: - LIKE fallback (1〜2文字) vs FTS5 (3文字以上)
-
-    @Test fun `one-char query uses LIKE fallback`() {
-        val e = fresh()
-        e.index(1, "がっこう")
-        e.index(2, "かばん")
-        assertEquals(listOf(1L), e.search("が", 10u).map { it.id })
-    }
-
-    @Test fun `two-char query uses LIKE fallback`() {
-        val e = fresh()
-        e.index(1, "がっこう")
-        e.index(2, "かばん")
-        assertEquals(listOf(1L), e.search("がっ", 10u).map { it.id })
-    }
-
-    @Test fun `three-char query uses FTS5`() {
-        val e = fresh()
-        e.index(1, "がっこう")
-        val hits = e.search("がっこ", 10u)
-        assertEquals(listOf(1L), hits.map { it.id })
-        // FTS5 経路は bm25 のスコアを返す。score は LIKE と違って 0 以外、有限。
-        val first = hits.first()
-        assertNotEquals(0.0, first.score)
-        assertTrue(first.score.isFinite())
-    }
 
     @Test fun `LIKE fallback returns zero score`() {
         val e = fresh()
         e.index(1, "がっこう")
-        val hits = e.search("が", 10u)
-        assertEquals(0.0, hits.first().score)
+        assertEquals(0.0, e.search("が", 10u).first().score)
     }
 
-    // MARK: - Limit / ordering
-
-    @Test fun `limit is honored`() {
+    @Test fun `FTS5 hit has finite nonzero score`() {
         val e = fresh()
-        for (i in 1L..20L) {
-            e.index(i, "doc $i about coffee bean")
-        }
-        assertEquals(5, e.search("coffee", 5u).size)
-        assertTrue(e.search("coffee", 0u).isEmpty())
+        e.index(1, "がっこう")
+        val hits = e.search("がっこ", 10u)
+        assertFalse(hits.isEmpty())
+        val first = hits.first()
+        assertNotEquals(0.0, first.score)
+        assertTrue(first.score.isFinite())
     }
 
     @Test fun `results are ordered by bm25 ascending`() {
@@ -134,12 +52,22 @@ class SearchEngineQueryTest {
         assertEquals(scores, scores.sorted())
     }
 
-    // MARK: - Quote / FTS5 special character safety
-
-    @Test fun `quote in query is escaped`() {
+    @Test fun `limit is honored`() {
         val e = fresh()
-        e.index(1, """say "hello" world""")
-        assertEquals(listOf(1L), e.search(""""hello"""", 10u).map { it.id })
+        for (i in 1L..20L) {
+            e.index(i, "doc $i about coffee bean")
+        }
+        assertEquals(5, e.search("coffee", 5u).size)
+        assertTrue(e.search("coffee", 0u).isEmpty())
+    }
+
+    @Test fun `whitespace-only query does not crash`() {
+        val e = fresh()
+        e.index(1, "anything")
+        // " " is one normalized char → LIKE path; result may or may not be empty,
+        // but must not throw.
+        val hits = e.search(" ", 10u)
+        assertTrue(hits.size >= 0)
     }
 
     @Test fun `fts5 special characters do not crash`() {
@@ -150,8 +78,6 @@ class SearchEngineQueryTest {
             e.search(q, 10u) // 例外なく完走することだけを確認
         }
     }
-
-    // MARK: - Concurrency smoke
 
     @Test fun `concurrent search on same engine works`() {
         val e = fresh()
