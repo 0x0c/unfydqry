@@ -1,6 +1,6 @@
 name: SearchSample
 options:
-  bundleIdPrefix: com.unimose
+  bundleIdPrefix: com.unfydqry
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
@@ -34,5 +34,5 @@ targets:
           - UIInterfaceOrientationPortrait
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.unimose.searchsample
+        PRODUCT_BUNDLE_IDENTIFIER: com.unfydqry.searchsample
         TARGETED_DEVICE_FAMILY: "1,2"

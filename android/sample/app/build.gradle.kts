@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.unimose.searchsample"
+    namespace = "com.unfydqry.searchsample"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.unimose.searchsample"
+        applicationId = "com.unfydqry.searchsample"
         minSdk = 29
         targetSdk = 34
         versionCode = 1

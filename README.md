@@ -1,4 +1,4 @@
-# unimose
+# unfydqry
 
 > 🌐 日本語版: [docs/README.ja.md](docs/README.ja.md)
 
@@ -8,8 +8,8 @@ iOS and as a Gradle module on Android.
 
 Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md) (Japanese).
 
-[![Swift Tests](https://github.com/akiramatsuda/unimose/actions/workflows/swift-tests.yml/badge.svg)](.github/workflows/swift-tests.yml)
-[![Kotlin Tests](https://github.com/akiramatsuda/unimose/actions/workflows/kotlin-tests.yml/badge.svg)](.github/workflows/kotlin-tests.yml)
+[![Swift Tests](https://github.com/akiramatsuda/unfydqry/actions/workflows/swift-tests.yml/badge.svg)](.github/workflows/swift-tests.yml)
+[![Kotlin Tests](https://github.com/akiramatsuda/unfydqry/actions/workflows/kotlin-tests.yml/badge.svg)](.github/workflows/kotlin-tests.yml)
 
 ## What it does
 
@@ -22,7 +22,7 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 ## Layout
 
 ```
-unimose/
+unfydqry/
 ├── Package.swift                ← SwiftPM entry point, kept at repo root
 ├── core/                        Rust implementation (crate name: unfydqry)
 │   ├── Cargo.toml

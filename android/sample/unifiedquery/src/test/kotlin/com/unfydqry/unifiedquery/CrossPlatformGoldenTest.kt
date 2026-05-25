@@ -1,4 +1,4 @@
-package com.unimose.unifiedquery
+package com.unfydqry.unifiedquery
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

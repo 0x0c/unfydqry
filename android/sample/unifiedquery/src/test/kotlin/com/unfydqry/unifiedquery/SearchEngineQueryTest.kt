@@ -1,4 +1,4 @@
-package com.unimose.unifiedquery
+package com.unfydqry.unifiedquery
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit

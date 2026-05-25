@@ -1,4 +1,4 @@
-package com.unimose.searchsample
+package com.unfydqry.searchsample
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity

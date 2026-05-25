@@ -1,4 +1,4 @@
-package com.unimose.unifiedquery
+package com.unfydqry.unifiedquery
 
 import java.io.File
 import java.nio.file.Files
