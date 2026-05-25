@@ -13,7 +13,7 @@ settings:
     SUPPORTS_MACCATALYST: NO
 packages:
   SearchCore:
-    path: ../
+    path: ../../
 targets:
   SearchSample:
     type: application

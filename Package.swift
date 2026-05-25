@@ -2,6 +2,7 @@
 import PackageDescription
 
 // クロスプラットフォーム検索エンジン(Rust + UniFFI)の Swift パッケージ。
+// パッケージはリポジトリのルートに配置されている。
 //
 // `binaryTarget` で XCFramework を取り込み、`SearchCoreFFI` の C モジュールが
 // XCFramework 内の modulemap 経由で公開される(中身は libsearch_core.a)。

@@ -3,9 +3,7 @@ package com.unimose.searchsample
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,46 +24,50 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import uniffi.search_core.Hit
 import uniffi.search_core.SearchEngine
 import uniffi.search_core.normalizeLoose
+
+/// アプリ側「本体DB」を模した最小レコード(SwiftData/Room エンティティに相当)。
+data class Record(val id: Long, val text: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dbPath = filesDir.resolve("search_index.sqlite").absolutePath
         val engine = SearchEngine(dbPath)
-        seed(engine)
+        val store = seed(engine)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    SearchScreen(engine)
+                    SearchScreen(engine, store)
                 }
             }
         }
     }
 
-    private fun seed(engine: SearchEngine) {
-        // iOS サンプルと同じシード(両OSで同じヒットIDが返ることを目で確認するため)
+    // iOS サンプルと同じシード(両OSで同じヒットIDが返ることを目で確認するため)。
+    // 返り値は id → Record の引き直し用ストア。
+    private fun seed(engine: SearchEngine): Map<Long, Record> {
         val docs = listOf(
-            1L to "東京タワー",
-            2L to "とうきょうスカイツリー",
-            3L to "ﾄｳｷｮｳ ﾄﾞｰﾑ",
-            4L to "Osaka 城",
-            5L to "がっこう ぐらし",
-            6L to "かっこう の歌",
-            7L to "Ｐｙｔｈｏｎ 入門",
-            8L to "ぱんだ と ﾊﾟﾝﾀﾞ"
+            Record(1L, "東京タワー"),
+            Record(2L, "とうきょうスカイツリー"),
+            Record(3L, "ﾄｳｷｮｳ ﾄﾞｰﾑ"),
+            Record(4L, "Osaka 城"),
+            Record(5L, "がっこう ぐらし"),
+            Record(6L, "かっこう の歌"),
+            Record(7L, "Ｐｙｔｈｏｎ 入門"),
+            Record(8L, "ぱんだ と ﾊﾟﾝﾀﾞ")
         )
-        docs.forEach { (id, text) -> engine.index(id, text) }
+        docs.forEach { engine.index(it.id, it.text) }
+        return docs.associateBy { it.id }
     }
 }
 
 @Composable
-fun SearchScreen(engine: SearchEngine) {
+fun SearchScreen(engine: SearchEngine, store: Map<Long, Record>) {
     var query by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("indexed 8 docs") }
-    val results = remember { mutableStateListOf<Hit>() }
+    var status by remember { mutableStateOf("indexed ${store.size} docs") }
+    val results = remember { mutableStateListOf<Record>() }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         OutlinedTextField(
@@ -77,19 +79,24 @@ fun SearchScreen(engine: SearchEngine) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = {
             val hits = engine.search(query, 50u)
+            // 設計書 §1.3「IDのみ返却 / 本体DBから再フェッチ」を最小実装。
+            val records = hits.mapNotNull { store[it.id] }
             results.clear()
-            results.addAll(hits)
-            status = "hits: ${hits.size}  normalized=\"${normalizeLoose(query)}\""
+            results.addAll(records)
+            status = "hits: ${records.size}  normalized=\"${normalizeLoose(query)}\""
         }) { Text("検索") }
         Spacer(Modifier.height(8.dp))
         Text(status, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(results, key = { it.id }) { hit ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("id=${hit.id}")
-                    Text("%.3f".format(hit.score))
+            items(results, key = { it.id }) { record ->
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(record.text, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "id=${record.id}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

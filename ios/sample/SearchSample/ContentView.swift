@@ -1,13 +1,23 @@
 import SearchCore
 import SwiftUI
 
+/// アプリ側で持つ「本体DB」を模した最小レコード。
+/// 本物のアプリでは SwiftData/Core Data のエンティティに相当する位置づけ。
+struct Record: Identifiable, Hashable {
+    let id: Int64
+    let text: String
+}
+
 @MainActor
 final class SearchModel: ObservableObject {
     @Published var query: String = ""
     @Published var status: String = ""
-    @Published var results: [Hit] = []
+    @Published var results: [Record] = []
 
     private let engine: SearchEngine
+    /// 検索エンジンは ID と score しか返さないため、本体側で id→Record の引き直しを行う。
+    /// 設計書 §1.3「IDのみ返却 / 本体DBから再フェッチ」をミニチュア実装したもの。
+    private var store: [Int64: Record] = [:]
 
     init() {
         let url = FileManager.default
@@ -22,19 +32,19 @@ final class SearchModel: ObservableObject {
     }
 
     private func seedIfNeeded() {
-        // 設計書 §3 の使用イメージそのままに、簡単なシード投入。
-        let seed: [(Int64, String)] = [
-            (1, "東京タワー"),
-            (2, "とうきょうスカイツリー"),
-            (3, "ﾄｳｷｮｳ ﾄﾞｰﾑ"),
-            (4, "Osaka 城"),
-            (5, "がっこう ぐらし"),
-            (6, "かっこう の歌"),
-            (7, "Ｐｙｔｈｏｎ 入門"),
-            (8, "ぱんだ と ﾊﾟﾝﾀﾞ")
+        let seed: [Record] = [
+            Record(id: 1, text: "東京タワー"),
+            Record(id: 2, text: "とうきょうスカイツリー"),
+            Record(id: 3, text: "ﾄｳｷｮｳ ﾄﾞｰﾑ"),
+            Record(id: 4, text: "Osaka 城"),
+            Record(id: 5, text: "がっこう ぐらし"),
+            Record(id: 6, text: "かっこう の歌"),
+            Record(id: 7, text: "Ｐｙｔｈｏｎ 入門"),
+            Record(id: 8, text: "ぱんだ と ﾊﾟﾝﾀﾞ")
         ]
-        for (id, text) in seed {
-            try? engine.index(id: id, text: text)
+        for record in seed {
+            try? engine.index(id: record.id, text: record.text)
+            store[record.id] = record
         }
         status = "indexed \(seed.count) docs"
         if let auto = ProcessInfo.processInfo.environment["SEARCH_AUTO_QUERY"] {
@@ -47,7 +57,9 @@ final class SearchModel: ObservableObject {
 
     func search() {
         do {
-            results = try engine.search(query: query, limit: 50)
+            let hits = try engine.search(query: query, limit: 50)
+            // ID で本体ストアから引き直す(失われたレコードはスキップ)。
+            results = hits.compactMap { store[$0.id] }
             status = "hits: \(results.count)  normalized=\u{0022}\(normalizeLoose(input: query))\u{0022}"
         } catch {
             status = "error: \(error)"
@@ -70,14 +82,16 @@ struct ContentView: View {
                 Text(model.status)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                List(model.results, id: \.id) { hit in
-                    HStack {
-                        Text("id=\(hit.id)")
-                        Spacer()
-                        Text(String(format: "%.3f", hit.score))
+                List(model.results) { record in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(record.text)
+                            .font(.body)
+                        Text("id=\(record.id)")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
+                    .padding(.vertical, 2)
                 }
             }
             .padding()
