@@ -1,0 +1,22 @@
+[package]
+name = "search-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+
+[lib]
+name = "search_core"
+# rlib: cargo test / 内部利用
+# staticlib: iOS XCFramework
+# cdylib: Android .so
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+uniffi = { version = "0.28", features = ["cli"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+unicode-normalization = "0.1"
+thiserror = "1"

@@ -1,0 +1,35 @@
+name: SearchSample
+options:
+  bundleIdPrefix: com.unimose
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    SUPPORTS_MACCATALYST: NO
+targets:
+  SearchSample:
+    type: application
+    platform: iOS
+    sources:
+      - path: SearchSample
+    dependencies:
+      - framework: ../SearchCore.xcframework
+        embed: false
+    info:
+      path: SearchSample/Info.plist
+      properties:
+        UILaunchScreen:
+          UIColorName: ""
+        CFBundleDisplayName: SearchSample
+        UIRequiredDeviceCapabilities: [arm64]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unimose.searchsample
+        TARGETED_DEVICE_FAMILY: "1,2"
