@@ -8,8 +8,8 @@ iOS and as a Gradle module on Android.
 
 Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md) (Japanese).
 
-[![Swift Tests](https://github.com/akiramatsuda/unfydqry/actions/workflows/swift-tests.yml/badge.svg)](.github/workflows/swift-tests.yml)
-[![Kotlin Tests](https://github.com/akiramatsuda/unfydqry/actions/workflows/kotlin-tests.yml/badge.svg)](.github/workflows/kotlin-tests.yml)
+[![Swift Tests](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml)
+[![Kotlin Tests](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml)
 
 ## What it does
 
