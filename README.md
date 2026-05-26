@@ -2,9 +2,9 @@
 
 > 🌐 日本語版: [docs/README.ja.md](docs/README.ja.md)
 
-A shared full-text search engine usable from both iOS (SwiftData) and Android (Room).
+A shared full-text search engine usable from iOS, Android, and Flutter.
 A single search core written in **Rust + UniFFI** is consumed as a SwiftPM package on
-iOS and as a Gradle module on Android.
+iOS, as a Gradle module on Android, and as a Flutter method-channel plugin.
 
 Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md) (Japanese).
 
@@ -39,17 +39,22 @@ unfydqry/
 │       ├── settings.gradle.kts  include(":app", ":unifiedquery")
 │       ├── app/                 Compose sample app
 │       └── unifiedquery/        JVM Kotlin library + JUnit 5 (95 cases / 5 suites)
+├── flutter/                     Flutter plugin (method-channel wrapper)
+│   ├── lib/unfydqry.dart         public Dart API — depends on native binding below
+│   ├── ios/Classes/              Swift plugin → UnifiedQuery.SearchEngine (compile-time dep)
+│   ├── android/                  Kotlin plugin → uniffi.unfydqry.SearchEngine (compile-time dep)
+│   ├── test/                     Dart unit tests (mock channel, 11 cases)
+│   └── example/                  Flutter sample app
 └── docs/
     ├── README.ja.md
     └── cross-platform-search-engine-design.md
 ```
 
-| | iOS | Android |
-|---|---|---|
-| Library | `import UnifiedQuery` (SwiftPM) | `implementation(project(":unifiedquery"))` |
-| Generated binding | `ios/Sources/UnifiedQuery/UnifiedQuery.swift` | `android/sample/unifiedquery/src/main/kotlin/uniffi/unfydqry/unfydqry.kt` |
-| FFI module | `unfydqryFFI` (via the modulemap inside the XCFramework) | `libunfydqry.so` loaded through JNA |
-| Distributable | `ios/UnifiedQuery.xcframework` (arm64 device + arm64/x86_64 sim + arm64 mac) | `android/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/libunfydqry.so` |
+| | iOS | Android | Flutter |
+|---|---|---|---|
+| Library | `import UnifiedQuery` (SwiftPM) | `implementation(project(":unifiedquery"))` | `unfydqry` plugin (Dart) |
+| Native binding dep | `UnifiedQuery.SearchEngine` | `uniffi.unfydqry.SearchEngine` | same (via method channel) |
+| FFI | XCFramework → Rust | JNA `.so` → Rust | Method Channel → Swift/Kotlin → Rust |
 
 ## Quick usage
 
@@ -77,6 +82,21 @@ engine.index(1L, "Ｐｙｔｈｏｮ 入門")
 val hits = engine.search("python", 50u)
 // → [Hit(id=1, score=-1.521)]
 ```
+
+### Flutter (Dart)
+```dart
+import 'package:unfydqry/unfydqry.dart';
+
+final engine = await SearchEngine.open(dbPath);
+await engine.index(1, 'Ｐｙｔｈｏｮ 入門');
+final hits = await engine.search('python');  // → [Hit(id: 1, score: -1.521)]
+await engine.dispose();
+```
+
+Dart calls are forwarded over a method channel to the platform's native binding.
+If `UnifiedQuery.SearchEngine` (iOS) or `uniffi.unfydqry.SearchEngine` (Android) changes
+its API, `ios/Classes/UnfydqryPlugin.swift` or `android/.../UnfydqryPlugin.kt` will fail
+to compile — keeping the plugin in sync by construction.
 
 ## Build
 
@@ -137,6 +157,14 @@ gradle :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Flutter plugin
+```sh
+# Prerequisites: Flutter SDK ≥ 3.10, the XCFramework and .so files already built.
+cd flutter
+flutter test                     # 11 cases (mock method channel)
+cd example && flutter run        # sample app
+```
+
 ## Tests
 
 | Runtime | Scope | Command | Count |
@@ -144,6 +172,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | Rust | Internal `normalize` / `engine` logic | `cd core && cargo test --lib` | 15 |
 | Swift Testing | Full public API on macOS / iOS simulator | `swift test` | 61 |
 | JUnit 5 (JVM) | The same scenarios re-validated from Kotlin | `cd android/sample && gradle :unifiedquery:test` | 95 |
+| Dart (Flutter) | Method-channel contract (mock) | `cd flutter && flutter test` | 11 |
 
 `ios/Tests/UnifiedQueryTests/CrossPlatformGoldenTests.swift` and
 `android/sample/unifiedquery/src/test/kotlin/.../CrossPlatformGoldenTest.kt` share the
@@ -161,6 +190,7 @@ normalization breaks both at once (the "golden tests" approach from §E.4 of the
 | SwiftPM package | `UnifiedQuery` |
 | Android Gradle module | `:unifiedquery` |
 | Kotlin package | `uniffi.unfydqry` |
+| Flutter plugin | `unfydqry` (Dart package `unfydqry.flutter`) |
 
 ## License
 
