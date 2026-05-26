@@ -1,3 +1,7 @@
+# Android plugin Gradle cache
+android/.gradle/
+android/build/
+
 # Dart / Flutter tooling
 .dart_tool/
 .flutter-plugins
