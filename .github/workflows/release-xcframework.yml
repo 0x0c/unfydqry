@@ -26,7 +26,7 @@ on:
 jobs:
   release:
     name: Build and publish xcframework
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: write
