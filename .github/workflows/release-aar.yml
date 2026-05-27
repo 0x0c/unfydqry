@@ -50,7 +50,7 @@ jobs:
 
       - name: Set up Android NDK
         id: ndk
-        uses: nttld/setup-ndk@8c3b609ea99f3eed02a3b7df3eb02d5db8c70b3b # v1.5.0
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         with:
           ndk-version: r29
           add-to-path: false
