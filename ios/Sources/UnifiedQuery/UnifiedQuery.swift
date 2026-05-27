@@ -491,7 +491,7 @@ fileprivate struct FfiConverterString: FfiConverter {
 public protocol SearchEngineProtocol : AnyObject {
     
     /**
-     * ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
+     * The host just passes raw text; normalization runs inside the engine.
      */
     func index(id: Int64, text: String) throws 
     
@@ -560,7 +560,7 @@ public convenience init(dbPath: String)throws  {
 
     
     /**
-     * ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
+     * The host just passes raw text; normalization runs inside the engine.
      */
 open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConverterTypeSearchError.lift) {
     uniffi_unfydqry_fn_method_searchengine_index(self.uniffiClonePointer(),
@@ -786,7 +786,7 @@ fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
     }
 }
 /**
- * 検査・デバッグ用に正規化結果を取り出せるよう FFI でも公開する。
+ * Exposed through FFI so the normalized form can be inspected for testing and debugging.
  */
 public func normalizeLoose(input: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {

@@ -50,8 +50,8 @@ jobs:
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Regenerate Swift binding and verify in sync
-        # uniffi-bindgen は cwd で `cargo metadata` を呼ぶので core/ に入って実行する。
-        # コミット済みの SearchCore binding が現在の Rust と一致することを担保する。
+        # uniffi-bindgen invokes `cargo metadata` against cwd, so we run it inside core/.
+        # This guarantees the committed Swift binding matches the current Rust implementation.
         working-directory: core
         run: |
           set -eux

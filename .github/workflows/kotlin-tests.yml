@@ -58,9 +58,9 @@ jobs:
         uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
 
       - name: Verify Kotlin binding is in sync with Rust
-        # コミット済みの Kotlin バインディングが、現在の Rust 実装から再生成される
-        # ものと一致することを確かめる(ドリフト検出)。
-        # uniffi-bindgen は cwd で `cargo metadata` を呼ぶので core/ で実行する。
+        # Verify that the committed Kotlin binding matches what would be regenerated
+        # from the current Rust implementation (drift detection).
+        # uniffi-bindgen invokes `cargo metadata` against cwd, so we run it inside core/.
         working-directory: core
         run: |
           set -eux

@@ -1249,7 +1249,7 @@ private class JavaLangRefCleanable(
 public interface SearchEngineInterface {
     
     /**
-     * ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
+     * The host just passes raw text; normalization runs inside the engine.
      */
     fun `index`(`id`: kotlin.Long, `text`: kotlin.String)
     
@@ -1350,7 +1350,7 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface {
 
     
     /**
-     * ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
+     * The host just passes raw text; normalization runs inside the engine.
      */
     @Throws(SearchException::class)override fun `index`(`id`: kotlin.Long, `text`: kotlin.String)
         = 
@@ -1543,7 +1543,7 @@ public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
     }
 }
         /**
-         * 検査・デバッグ用に正規化結果を取り出せるよう FFI でも公開する。
+         * Exposed through FFI so the normalized form can be inspected for testing and debugging.
          */ fun `normalizeLoose`(`input`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
