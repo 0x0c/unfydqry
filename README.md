@@ -14,10 +14,11 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 
 ## What it does
 
-- **Fuzziness axes that get folded**: case, full-width / half-width, kana variant (katakana ↔ hiragana).
+- **Pluggable behaviour**: the host binding picks a *normalization profile* and a *search algorithm*, and the engine combines them. Both implementations live in one Rust core, so any chosen combination behaves identically on iOS and Android — see [Configuring behaviour](#configuring-behaviour).
+- **Fuzziness axes that get folded** (default `loose` profile): case, full-width / half-width, kana variant (katakana ↔ hiragana).
 - **Dakuten / handakuten are kept distinct** (`か` and `が` are different keys).
-- **SQLite FTS5 + trigram** index. Queries shorter than 3 chars fall back to `LIKE`.
-- Searches return only the stable `id` and a `bm25` score; the host re-fetches records from its source-of-truth store.
+- **Default search** is a SQLite FTS5 + trigram index ranked by `bm25`; `substring` and `prefix` algorithms are also selectable.
+- Searches return only the stable `id` and a score; the host re-fetches records from its source-of-truth store.
 - Because the logic lives in **one Rust implementation**, iOS and Android behaviour matches by construction, not by convention.
 
 ## Layout
@@ -27,7 +28,12 @@ unfydqry/
 ├── Package.swift                ← SwiftPM entry point, kept at repo root
 ├── core/                        Rust implementation (crate name: unfydqry)
 │   ├── Cargo.toml
-│   ├── src/{lib,normalize,engine,bin/uniffi-bindgen}.rs
+│   ├── src/lib.rs               FFI surface (constructors, normalize* exports)
+│   ├── src/config.rs           NormalizeProfile / SearchStrategy / EngineConfig
+│   ├── src/engine.rs           SearchEngine (index/search/remove, profile fingerprint)
+│   ├── src/normalize/          swappable normalization profiles
+│   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix)
+│   ├── src/bin/uniffi-bindgen.rs
 │   └── tests/conformance.rs     spec-driven integration tests (see Tests)
 ├── spec/                        cross-platform test specification (JSON)
 │   ├── README.md                schema and conventions
@@ -106,6 +112,60 @@ val hits = engine.search("python", 50u)
 // → [Hit(id=1, score=-1.521)]
 ```
 
+## Configuring behaviour
+
+`SearchEngine` has two constructors. The **combination is chosen on the binding side**; every implementation lives in the Rust core (`core/src/normalize/`, `core/src/search/`), so the choice can never make iOS and Android diverge.
+
+- `SearchEngine(dbPath:)` — the default combination, `loose` + `trigram_bm25`. Unchanged from before, so existing callers keep working.
+- `SearchEngine.withConfig(dbPath:, config:)` — pick the normalization profile and the search algorithm explicitly.
+
+### Normalization profiles (`NormalizeProfile`)
+
+The profile is applied identically at index time and query time.
+
+| Profile | Pipeline | Effect |
+|---|---|---|
+| `loose` (default) | NFKC → katakana→hiragana → lowercase | Case, width, and kana variant all fold together — `ﾄｳｷｮｳ`, `トウキョウ`, `とうきょう` collapse to one key. |
+| `nfkc_case_fold` | NFKC → lowercase | Width and case fold, but **kana variants stay distinct** (`トウキョウ` ≠ `とうきょう`). |
+
+Both profiles keep dakuten / handakuten distinct (`か` ≠ `が`).
+
+> The active profile is fingerprinted into the index's `meta` table. Reopening an existing index with a *different* profile throws `ConfigMismatch` rather than silently returning wrong results — rebuild the index to switch profiles. (An index created before this field existed is treated as `loose`.)
+
+### Search algorithms (`SearchStrategy`)
+
+Every algorithm runs against the already-normalized text and returns `(id, score)`.
+
+| Strategy | Matches | SQL | Score | Best for |
+|---|---|---|---|---|
+| `trigram_bm25` (default) | the whole query as a phrase, anywhere in the text | FTS5 trigram index + `bm25()` | bm25 relevance (lower = more relevant) | General-purpose **ranked** full-text search. |
+| `substring` | the query anywhere in the text | `LIKE '%q%'` | `0.0` (unranked) | "Contains" matching where short (1–2 char) queries must also hit and ranking doesn't matter. |
+| `prefix` | text that **starts with** the query | `LIKE 'q%'` | `0.0` (unranked) | Type-ahead / autocomplete suggestions. |
+
+Notes:
+- `trigram_bm25` is the only ranked strategy. Trigram indexing cannot match queries shorter than 3 characters, so those automatically fall back to a substring `LIKE` (with score `0.0`).
+- `substring` and `prefix` are unranked: they return matches in storage order with a constant `0.0` score. Use `limit` to cap results.
+
+### Selecting a combination
+
+iOS (Swift):
+```swift
+let engine = try SearchEngine.withConfig(
+    dbPath: dbURL.path,
+    config: EngineConfig(normalize: .nfkcCaseFold, strategy: .prefix)
+)
+```
+
+Android (Kotlin):
+```kotlin
+val engine = SearchEngine.withConfig(
+    dbPath,
+    EngineConfig(NormalizeProfile.NFKC_CASE_FOLD, SearchStrategy.PREFIX),
+)
+```
+
+To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile) and `normalizeWithProfile(input, profile)`.
+
 ## Build
 
 ### Prerequisites
@@ -170,7 +230,7 @@ should follow exactly the same shape (see *Adding a new platform* below).
 
 | Layer | Lives in | What it covers | What it does **not** cover |
 |---|---|---|---|
-| 1. Rust unit | `core/src/{normalize,engine}.rs` (`#[cfg(test)] mod tests`) | Internal logic of the Rust core — has access to private items. | Anything that needs the FFI layer. |
+| 1. Rust unit | `core/src/normalize/` & `core/src/engine.rs` (`#[cfg(test)] mod tests`) | Internal logic of the Rust core — has access to private items. | Anything that needs the FFI layer. |
 | 2. Spec-driven (cross-platform) | `spec/*.json` + per-platform loader | Pure `(input → expected)` and `(ops → ids)` cases shared by all runners. Drift in the Rust core fails the **same `id`** in all three CIs at once. | Property/inequality assertions, performance smoke, filesystem lifecycle, score sanity — none of these reduce to a plain equality on a value. |
 | 3. Native lifecycle | `*LifecycleTests` per platform | Opening / reopening / persisting / invalid-path on the language's actual I/O and error types. | Search behaviour. |
 | 4. Native query (non-data-driven) | `*QueryTests` / `*Tests` per platform | bm25 ordering, `limit` honouring, score sanity (`0.0` for LIKE, finite-nonzero for FTS5), non-throwing safety on FTS5 specials, concurrency smoke. | Anything expressible as `(input → expected)` — that belongs in `spec/`. |
@@ -184,7 +244,7 @@ isn't in scope.
 
 | Runner | Command | What it loads |
 |---|---|---|
-| Rust unit | `cd core && cargo test --lib` | `core/src/{normalize,engine}.rs` `#[cfg(test)]` modules |
+| Rust unit | `cd core && cargo test --lib` | `core/src/normalize/` & `core/src/engine.rs` `#[cfg(test)]` modules |
 | Rust conformance | `cd core && cargo test --test conformance` | `core/tests/conformance.rs` → `../spec/*.json` |
 | Rust (all) | `cd core && cargo test --all-targets` | both of the above (matches CI) |
 | Swift Testing | `swift test` | `ios/Tests/UnifiedQueryTests/*.swift` (the `SpecLoader` walks up from `#filePath` to find `spec/`) |
@@ -236,8 +296,8 @@ Rust (`core/`):
 
 | File | Layer | Notes |
 |---|---|---|
-| `src/normalize.rs` `mod tests` | 1 — unit | Trace table from design doc §2.2; dakuten/handakuten distinctness. |
-| `src/engine.rs` `mod tests` | 1 — unit | Index / remove / reindex / LIKE fallback / quote escaping / empty query. |
+| `src/normalize/mod.rs` `mod tests` | 1 — unit | Trace table from design doc §2.2; dakuten/handakuten distinctness; `nfkc_case_fold` keeps kana distinct. |
+| `src/engine.rs` `mod tests` | 1 — unit | Index / remove / reindex / LIKE fallback / quote escaping / empty query; `prefix` & `substring` strategies; `ConfigMismatch` on profile change. |
 | `tests/conformance.rs` | 2 — spec-driven | Same `spec/*.json` as Swift and Kotlin, asserted directly on the in-process Rust API. Catches core drift independently of either binding. |
 
 The native query/lifecycle layer is intentionally **not** mirrored in the
