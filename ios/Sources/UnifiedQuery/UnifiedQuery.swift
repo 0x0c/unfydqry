@@ -1338,6 +1338,94 @@ extension NormalizeProfile: Equatable, Hashable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Whether an on-disk index can be queried with a given normalization, or needs
+ * regenerating first. Returned by `reindexStatus` / `reindexStatusWithOptions`.
+ */
+
+public enum ReindexStatus {
+    
+    /**
+     * The index holds no documents; any normalization can be adopted freely
+     * (no regeneration needed — the next `index` call stamps the profile).
+     */
+    case empty
+    /**
+     * The stored documents were already normalized with the requested
+     * profile/options. The index is ready to query as-is.
+     */
+    case upToDate
+    /**
+     * The stored documents were normalized under a *different* profile/options.
+     * Querying as-is would return wrong results — regenerate (via `reindex`,
+     * `withConfigRebuilding`, or `withOptionsRebuilding`) before use.
+     */
+    case configChanged
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReindexStatus: FfiConverterRustBuffer {
+    typealias SwiftType = ReindexStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReindexStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .empty
+        
+        case 2: return .upToDate
+        
+        case 3: return .configChanged
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ReindexStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .empty:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .upToDate:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .configChanged:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReindexStatus_lift(_ buf: RustBuffer) throws -> ReindexStatus {
+    return try FfiConverterTypeReindexStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReindexStatus_lower(_ value: ReindexStatus) -> RustBuffer {
+    return FfiConverterTypeReindexStatus.lower(value)
+}
+
+
+
+extension ReindexStatus: Equatable, Hashable {}
+
+
+
 
 /**
  * An error surfaced across the FFI boundary by `SearchEngine`.
@@ -1614,6 +1702,31 @@ public func normalizeWithProfile(input: String, profile: NormalizeProfile) -> St
     )
 })
 }
+/**
+ * Whether the index at `db_path` needs regenerating to be used with `config`'s
+ * normalization profile. Lets a host decide between `withConfig` (when
+ * `UpToDate`/`Empty`) and `withConfigRebuilding` / `reindex` (when
+ * `ConfigChanged`) without first triggering a `ConfigMismatch` error.
+ */
+public func reindexStatus(dbPath: String, config: EngineConfig)throws  -> ReindexStatus {
+    return try  FfiConverterTypeReindexStatus.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_func_reindexstatus(
+        FfiConverterString.lower(dbPath),
+        FfiConverterTypeEngineConfig.lower(config),$0
+    )
+})
+}
+/**
+ * Like `reindexStatus`, but for a composable `NormalizeOptions` set.
+ */
+public func reindexStatusWithOptions(dbPath: String, options: NormalizeOptions)throws  -> ReindexStatus {
+    return try  FfiConverterTypeReindexStatus.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_func_reindexstatuswithoptions(
+        FfiConverterString.lower(dbPath),
+        FfiConverterTypeNormalizeOptions.lower(options),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -1637,6 +1750,12 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_func_normalizewithprofile() != 49347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_func_reindexstatus() != 13108) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 36594) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 36421) {

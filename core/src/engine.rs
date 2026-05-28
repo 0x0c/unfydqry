@@ -45,6 +45,52 @@ impl From<rusqlite::Error> for SearchError {
     }
 }
 
+/// Whether an on-disk index can be queried with a given normalization, or needs
+/// regenerating first. Returned by `reindexStatus` / `reindexStatusWithOptions`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ReindexStatus {
+    /// The index holds no documents; any normalization can be adopted freely
+    /// (no regeneration needed — the next `index` call stamps the profile).
+    Empty,
+    /// The stored documents were already normalized with the requested
+    /// profile/options. The index is ready to query as-is.
+    UpToDate,
+    /// The stored documents were normalized under a *different* profile/options.
+    /// Querying as-is would return wrong results — regenerate (via `reindex`,
+    /// `withConfigRebuilding`, or `withOptionsRebuilding`) before use.
+    ConfigChanged,
+}
+
+/// Reports whether the index at `db_path` needs regenerating before it can be
+/// queried with `requested` (a normalize fingerprint). Opening the path creates
+/// an empty index if none exists, which reports `Empty`.
+fn reindex_status_for(db_path: &str, requested: &str) -> Result<ReindexStatus, SearchError> {
+    let conn = SearchEngine::open_schema(db_path)?;
+    Ok(match SearchEngine::stored_profile(&conn)? {
+        None => ReindexStatus::Empty,
+        Some(stored) if stored == requested => ReindexStatus::UpToDate,
+        Some(_) => ReindexStatus::ConfigChanged,
+    })
+}
+
+/// Whether the index at `db_path` needs regenerating to be used with `config`'s
+/// normalization profile. Lets a host decide between `withConfig` (when
+/// `UpToDate`/`Empty`) and `withConfigRebuilding` / `reindex` (when
+/// `ConfigChanged`) without first triggering a `ConfigMismatch` error.
+#[uniffi::export(name = "reindexStatus")]
+pub fn reindex_status(db_path: String, config: EngineConfig) -> Result<ReindexStatus, SearchError> {
+    reindex_status_for(&db_path, &config.normalize.options().fingerprint())
+}
+
+/// Like `reindexStatus`, but for a composable `NormalizeOptions` set.
+#[uniffi::export(name = "reindexStatusWithOptions")]
+pub fn reindex_status_with_options(
+    db_path: String,
+    options: NormalizeOptions,
+) -> Result<ReindexStatus, SearchError> {
+    reindex_status_for(&db_path, &options.fingerprint())
+}
+
 /// A persistent full-text search index backed by SQLite.
 ///
 /// Create one with `SearchEngine(dbPath:)` for the default behaviour, or
@@ -376,6 +422,46 @@ mod tests {
 
         // Reopening with the original (loose) profile still works.
         SearchEngine::new(p.clone()).expect("reopen loose");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reindex_status_detects_config_state() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("unfydqry_status_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_string_lossy().to_string();
+
+        let loose = EngineConfig {
+            normalize: NormalizeProfile::Loose,
+            strategy: SearchStrategy::TrigramBm25,
+        };
+        let nfkc = EngineConfig {
+            normalize: NormalizeProfile::NfkcCaseFold,
+            strategy: SearchStrategy::TrigramBm25,
+        };
+
+        // A fresh (empty) index reports Empty for any config.
+        assert_eq!(
+            reindex_status(p.clone(), loose.clone()).unwrap(),
+            ReindexStatus::Empty
+        );
+
+        {
+            let e = SearchEngine::new(p.clone()).expect("open loose");
+            e.index(1, "とうきょう".into()).unwrap();
+        }
+
+        // Same profile → up to date; a different profile → needs regeneration.
+        assert_eq!(
+            reindex_status(p.clone(), loose).unwrap(),
+            ReindexStatus::UpToDate
+        );
+        assert_eq!(
+            reindex_status(p.clone(), nfkc).unwrap(),
+            ReindexStatus::ConfigChanged
+        );
 
         let _ = std::fs::remove_file(&path);
     }

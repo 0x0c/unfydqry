@@ -738,6 +738,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -784,6 +788,10 @@ internal interface UniffiLib : Library {
     fun uniffi_unfydqry_fn_func_normalizewithoptions(`input`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_unfydqry_fn_func_normalizewithprofile(`input`: RustBuffer.ByValue,`profile`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_unfydqry_fn_func_reindexstatus(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_unfydqry_fn_func_reindexstatuswithoptions(`dbPath`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_unfydqry_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -903,6 +911,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_unfydqry_checksum_func_normalizewithprofile(
     ): Short
+    fun uniffi_unfydqry_checksum_func_reindexstatus(
+    ): Short
+    fun uniffi_unfydqry_checksum_func_reindexstatuswithoptions(
+    ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_index(
     ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_reindex(
@@ -945,6 +957,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_func_normalizewithprofile() != 49347.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_func_reindexstatus() != 13108.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 36594.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 36421.toShort()) {
@@ -1969,6 +1987,54 @@ public object FfiConverterTypeNormalizeProfile: FfiConverterRustBuffer<Normalize
 
 
 
+/**
+ * Whether an on-disk index can be queried with a given normalization, or needs
+ * regenerating first. Returned by `reindexStatus` / `reindexStatusWithOptions`.
+ */
+
+enum class ReindexStatus {
+    
+    /**
+     * The index holds no documents; any normalization can be adopted freely
+     * (no regeneration needed — the next `index` call stamps the profile).
+     */
+    EMPTY,
+    /**
+     * The stored documents were already normalized with the requested
+     * profile/options. The index is ready to query as-is.
+     */
+    UP_TO_DATE,
+    /**
+     * The stored documents were normalized under a *different* profile/options.
+     * Querying as-is would return wrong results — regenerate (via `reindex`,
+     * `withConfigRebuilding`, or `withOptionsRebuilding`) before use.
+     */
+    CONFIG_CHANGED;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReindexStatus: FfiConverterRustBuffer<ReindexStatus> {
+    override fun read(buf: ByteBuffer) = try {
+        ReindexStatus.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ReindexStatus) = 4UL
+
+    override fun write(value: ReindexStatus, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 
 /**
@@ -2193,6 +2259,35 @@ public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_unfydqry_fn_func_normalizewithprofile(
         FfiConverterString.lower(`input`),FfiConverterTypeNormalizeProfile.lower(`profile`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Whether the index at `db_path` needs regenerating to be used with `config`'s
+         * normalization profile. Lets a host decide between `withConfig` (when
+         * `UpToDate`/`Empty`) and `withConfigRebuilding` / `reindex` (when
+         * `ConfigChanged`) without first triggering a `ConfigMismatch` error.
+         */
+    @Throws(SearchException::class) fun `reindexStatus`(`dbPath`: kotlin.String, `config`: EngineConfig): ReindexStatus {
+            return FfiConverterTypeReindexStatus.lift(
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_func_reindexstatus(
+        FfiConverterString.lower(`dbPath`),FfiConverterTypeEngineConfig.lower(`config`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Like `reindexStatus`, but for a composable `NormalizeOptions` set.
+         */
+    @Throws(SearchException::class) fun `reindexStatusWithOptions`(`dbPath`: kotlin.String, `options`: NormalizeOptions): ReindexStatus {
+            return FfiConverterTypeReindexStatus.lift(
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_func_reindexstatuswithoptions(
+        FfiConverterString.lower(`dbPath`),FfiConverterTypeNormalizeOptions.lower(`options`),_status)
 }
     )
     }
