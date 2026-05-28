@@ -25,7 +25,12 @@ final class SearchModel: ObservableObject {
             .urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("search_index.sqlite")
         do {
-            self.engine = try SearchEngine(dbPath: url.path)
+            // Explicitly select the normalize profile + search strategy.
+            // This pair reproduces the default behaviour; swap them to change it.
+            self.engine = try SearchEngine.withConfig(
+                dbPath: url.path,
+                config: EngineConfig(normalize: .loose, strategy: .trigramBm25)
+            )
         } catch {
             fatalError("open SearchEngine failed: \(error)")
         }

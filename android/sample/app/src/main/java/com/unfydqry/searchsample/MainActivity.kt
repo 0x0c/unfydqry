@@ -24,7 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import uniffi.unfydqry.EngineConfig
+import uniffi.unfydqry.NormalizeProfile
 import uniffi.unfydqry.SearchEngine
+import uniffi.unfydqry.SearchStrategy
 import uniffi.unfydqry.normalizeLoose
 
 /// Minimal record standing in for the app's "source-of-truth DB" (equivalent to a
@@ -35,7 +38,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dbPath = filesDir.resolve("search_index.sqlite").absolutePath
-        val engine = SearchEngine(dbPath)
+        // Explicitly select the normalize profile + search strategy.
+        // This pair reproduces the default behaviour; swap them to change it.
+        val engine = SearchEngine.withConfig(
+            dbPath,
+            EngineConfig(NormalizeProfile.LOOSE, SearchStrategy.TRIGRAM_BM25),
+        )
         val store = seed(engine)
         setContent {
             MaterialTheme {
