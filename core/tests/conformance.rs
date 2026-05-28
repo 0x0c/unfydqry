@@ -41,6 +41,11 @@ fn strategy_from(s: Option<&str>) -> SearchStrategy {
         "trigram_bm25" => SearchStrategy::TrigramBm25,
         "substring" => SearchStrategy::Substring,
         "prefix" => SearchStrategy::Prefix,
+        "suffix" => SearchStrategy::Suffix,
+        "all_terms" => SearchStrategy::AllTerms,
+        "fuzzy_trigram" => SearchStrategy::FuzzyTrigram,
+        "levenshtein" => SearchStrategy::Levenshtein,
+        "damerau_levenshtein" => SearchStrategy::DamerauLevenshtein,
         other => panic!("unknown search strategy {other:?}"),
     }
 }

@@ -78,6 +78,11 @@ struct SpecDrivenTests {
         case "trigram_bm25": return .trigramBm25
         case "substring": return .substring
         case "prefix": return .prefix
+        case "suffix": return .suffix
+        case "all_terms": return .allTerms
+        case "fuzzy_trigram": return .fuzzyTrigram
+        case "levenshtein": return .levenshtein
+        case "damerau_levenshtein": return .damerauLevenshtein
         default: fatalError("unknown search strategy \"\(key ?? "")\"")
         }
     }

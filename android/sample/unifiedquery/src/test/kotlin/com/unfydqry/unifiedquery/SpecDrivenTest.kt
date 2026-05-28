@@ -64,6 +64,11 @@ class SpecDrivenTest {
             "trigram_bm25" -> SearchStrategy.TRIGRAM_BM25
             "substring" -> SearchStrategy.SUBSTRING
             "prefix" -> SearchStrategy.PREFIX
+            "suffix" -> SearchStrategy.SUFFIX
+            "all_terms" -> SearchStrategy.ALL_TERMS
+            "fuzzy_trigram" -> SearchStrategy.FUZZY_TRIGRAM
+            "levenshtein" -> SearchStrategy.LEVENSHTEIN
+            "damerau_levenshtein" -> SearchStrategy.DAMERAU_LEVENSHTEIN
             else -> error("unknown search strategy \"$key\"")
         }
 

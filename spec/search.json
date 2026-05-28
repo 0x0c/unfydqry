@@ -204,6 +204,66 @@
         {"search": {"query": "かたかな", "limit": 10}, "expected_ids": []},
         {"search": {"query": "カタカナ", "limit": 10}, "expected_ids": [1]}
       ]
+    },
+    {
+      "id": "suffix_strategy_matches_only_trailing",
+      "description": "With strategy=suffix, a query matches only documents whose normalized text ENDS with it (LIKE '%q'). Mid-string occurrences must not hit.",
+      "config": {"strategy": "suffix"},
+      "ops": [
+        {"op": "index", "id": 1, "text": "tokyo tower"},
+        {"op": "index", "id": 2, "text": "tower crane"}
+      ],
+      "assertions": [
+        {"search": {"query": "tower", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "all_terms_strategy_requires_every_term_any_order",
+      "description": "With strategy=all_terms, every whitespace-separated term must appear as a substring, in any order. 'sky tokyo' hits a doc containing both terms regardless of their order; docs missing either term do not.",
+      "config": {"strategy": "all_terms"},
+      "ops": [
+        {"op": "index", "id": 1, "text": "tokyo sky tree"},
+        {"op": "index", "id": 2, "text": "tokyo tower"},
+        {"op": "index", "id": 3, "text": "sky high"}
+      ],
+      "assertions": [
+        {"search": {"query": "sky tokyo", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "fuzzy_trigram_tolerates_a_typo",
+      "description": "With strategy=fuzzy_trigram, a one-character typo still matches via character-trigram set similarity (Jaccard). An unrelated doc shares no trigrams and is excluded.",
+      "config": {"strategy": "fuzzy_trigram"},
+      "ops": [
+        {"op": "index", "id": 1, "text": "international"},
+        {"op": "index", "id": 2, "text": "supercalifragilistic"}
+      ],
+      "assertions": [
+        {"search": {"query": "internationai", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "levenshtein_matches_one_char_typo",
+      "description": "With strategy=levenshtein, a query within the length-scaled edit-distance threshold of any word in the doc matches. 'tokio' is one substitution from the word 'tokyo' (threshold 1 for a 5-char query).",
+      "config": {"strategy": "levenshtein"},
+      "ops": [
+        {"op": "index", "id": 1, "text": "tokyo tower"},
+        {"op": "index", "id": 2, "text": "osaka castle"}
+      ],
+      "assertions": [
+        {"search": {"query": "tokio", "limit": 10}, "expected_ids": [1]}
+      ]
+    },
+    {
+      "id": "damerau_matches_adjacent_transposition",
+      "description": "With strategy=damerau_levenshtein, an adjacent transposition counts as a single edit, so 'tokoy' (a swap within 'tokyo') matches within the 5-char threshold of 1; plain levenshtein (distance 2) would not.",
+      "config": {"strategy": "damerau_levenshtein"},
+      "ops": [
+        {"op": "index", "id": 1, "text": "tokyo tower"}
+      ],
+      "assertions": [
+        {"search": {"query": "tokoy", "limit": 10}, "expected_ids": [1]}
+      ]
     }
   ],
   "seeded_matrices": [
