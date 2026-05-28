@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "loose_to_nfkc_splits_kana",
+      "description": "A doc indexed under loose (katakana folds to hiragana) is regenerated under nfkc_case_fold, which keeps kana variants distinct. After regeneration a hiragana query no longer matches the katakana doc, but the exact katakana query does — proving the stored norm was rebuilt from the retained raw text.",
+      "config_before": { "normalize": "loose", "strategy": "substring" },
+      "config_after": { "normalize": "nfkc_case_fold", "strategy": "substring" },
+      "ops": [
+        { "op": "index", "id": 1, "text": "カタカナ" }
+      ],
+      "before": [
+        { "search": { "query": "かたかな", "limit": 10 }, "expected_ids": [1] },
+        { "search": { "query": "カタカナ", "limit": 10 }, "expected_ids": [1] }
+      ],
+      "after": [
+        { "search": { "query": "かたかな", "limit": 10 }, "expected_ids": [] },
+        { "search": { "query": "カタカナ", "limit": 10 }, "expected_ids": [1] }
+      ]
+    },
+    {
+      "id": "nfkc_to_loose_folds_kana",
+      "description": "A doc indexed under nfkc_case_fold (kana kept distinct) is regenerated under loose, which folds katakana to hiragana and full-width to half-width. After regeneration a hiragana query and a half-width-katakana query both match the originally-katakana doc.",
+      "config_before": { "normalize": "nfkc_case_fold", "strategy": "substring" },
+      "config_after": { "normalize": "loose", "strategy": "substring" },
+      "ops": [
+        { "op": "index", "id": 1, "text": "トウキョウ" }
+      ],
+      "before": [
+        { "search": { "query": "トウキョウ", "limit": 10 }, "expected_ids": [1] },
+        { "search": { "query": "とうきょう", "limit": 10 }, "expected_ids": [] }
+      ],
+      "after": [
+        { "search": { "query": "とうきょう", "limit": 10 }, "expected_ids": [1] },
+        { "search": { "query": "ﾄｳｷｮｳ", "limit": 10 }, "expected_ids": [1] }
+      ]
+    }
+  ]
+}

@@ -61,7 +61,67 @@ struct SpecDrivenTests {
                 "matrix=\(pair.matrix.id) query=\"\(pair.query.query)\": \(pair.query.description); got=\(got.sorted()) want=\(want.sorted())")
     }
 
+    // MARK: - reindex.json
+
+    @Test func reindexSpecVersionIsExpected() {
+        #expect(Spec.reindex.version == Spec.expectedVersion)
+    }
+
+    @Test(arguments: Spec.reindex.cases)
+    func reindexMatchesSpec(_ c: ReindexCase) throws {
+        let path = Self.makeReindexDBPath()
+        defer { Self.cleanup(path) }
+
+        // Index under the before-profile and pin the pre-rebuild behaviour. The
+        // engine is released at the end of this scope so the connection is freed
+        // before reopening the same file.
+        do {
+            let before = try Self.engine(at: path, for: c.configBefore, rebuilding: false)
+            try apply(ops: c.ops, to: before)
+            try check(c.before, on: before, case: c, phase: "before")
+        }
+        // Reopen under the after-profile; a profile change regenerates the index
+        // from the retained raw text instead of throwing.
+        let after = try Self.engine(at: path, for: c.configAfter, rebuilding: true)
+        try check(c.after, on: after, case: c, phase: "after")
+    }
+
+    private func check(_ checks: [Assertion], on engine: SearchEngine, case c: ReindexCase, phase: String) throws {
+        for a in checks {
+            let hits = try engine.search(query: a.search.query, limit: a.search.limit)
+            let got = Set(hits.map(\.id))
+            let want = Set(a.expectedIds)
+            #expect(got == want,
+                    "reindex id=\(c.id) [\(phase)]: \(c.description); query=\"\(a.search.query)\" got=\(got.sorted()) want=\(want.sorted())")
+        }
+    }
+
     // MARK: - helpers
+
+    /// An independent temp DB file path for a reindex case. The caller cleans it up.
+    static func makeReindexDBPath() -> String {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("UnifiedQueryReindex-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("index.sqlite").path
+    }
+
+    /// Removes the SQLite file and its WAL/SHM sidecars.
+    static func cleanup(_ path: String) {
+        for suffix in ["", "-shm", "-wal"] {
+            try? FileManager.default.removeItem(atPath: path + suffix)
+        }
+    }
+
+    /// Opens a persistent engine at `path`, rebuilding the index in place when
+    /// `rebuilding` is set (used for the after-profile reopen).
+    static func engine(at path: String, for config: SpecConfig?, rebuilding: Bool) throws -> SearchEngine {
+        let ec = EngineConfig(normalize: profile(config?.normalize),
+                              strategy: strategy(config?.strategy))
+        return rebuilding
+            ? try SearchEngine.withConfigRebuilding(dbPath: path, config: ec)
+            : try SearchEngine.withConfig(dbPath: path, config: ec)
+    }
 
     /// Maps a spec profile key to the FFI enum; absent → loose.
     static func profile(_ key: String?) -> NormalizeProfile {

@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import java.io.File
+import java.nio.file.Files
+import java.util.UUID
 import java.util.stream.Stream
 import uniffi.unfydqry.EngineConfig
 import uniffi.unfydqry.NormalizeProfile
@@ -41,6 +44,42 @@ class SpecDrivenTest {
                     Arguments.of("${m.id}/${q.query}", m, q)
                 }
             }
+
+        @JvmStatic
+        fun reindexCases(): Stream<Arguments> =
+            Spec.reindex.cases.stream().map { Arguments.of(it.id, it) }
+
+        private fun makeTempDbPath(): String {
+            val dir = Files.createTempDirectory("SpecReindex-${UUID.randomUUID()}").toFile()
+            dir.deleteOnExit()
+            return File(dir, "index.sqlite").absolutePath
+        }
+
+        private fun cleanup(path: String) {
+            for (suffix in listOf("", "-shm", "-wal")) {
+                File(path + suffix).delete()
+            }
+        }
+
+        /**
+         * Opens a persistent engine at [path], regenerating the index in place
+         * when [rebuilding] is set (used for the after-profile reopen).
+         */
+        private fun openEngine(path: String, config: SpecConfig?, rebuilding: Boolean): SearchEngine {
+            val ec = EngineConfig(profile(config?.normalize), strategy(config?.strategy))
+            return if (rebuilding) SearchEngine.withConfigRebuilding(path, ec)
+            else SearchEngine.withConfig(path, ec)
+        }
+
+        private fun check(checks: List<Assertion>, engine: SearchEngine, c: ReindexCase, phase: String) {
+            for (a in checks) {
+                val got = engine.search(a.search.query, a.search.limit.toUInt()).map { it.id }.toSet()
+                val want = a.expectedIds.toSet()
+                assertEquals(want, got,
+                    "reindex id=${c.id} [$phase]: ${c.description}; " +
+                    "query=\"${a.search.query}\" got=${got.sorted()} want=${want.sorted()}")
+            }
+        }
 
         private fun apply(ops: List<IndexOp>, engine: SearchEngine) {
             for (op in ops) {
@@ -120,6 +159,41 @@ class SpecDrivenTest {
         assertEquals(want, got,
             "matrix=${m.id} query=\"${q.query}\": ${q.description}; " +
             "got=${got.sorted()} want=${want.sorted()}")
+    }
+
+    @Test fun `reindex spec version is expected`() {
+        assertEquals(Spec.EXPECTED_VERSION, Spec.reindex.version)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("reindexCases")
+    fun `reindex matches spec`(id: String, c: ReindexCase) {
+        val path = makeTempDbPath()
+        try {
+            // Index under the before-profile and pin the pre-rebuild behaviour.
+            // Close the engine before reopening so the connection is released.
+            val before = openEngine(path, c.configBefore, rebuilding = false)
+            try {
+                apply(c.ops, before)
+                check(c.before, before, c, "before")
+            } finally {
+                before.close()
+            }
+            // Reopen under the after-profile; a profile change regenerates the
+            // index from the retained raw text instead of throwing.
+            val after = openEngine(path, c.configAfter, rebuilding = true)
+            try {
+                check(c.after, after, c, "after")
+            } finally {
+                after.close()
+            }
+        } finally {
+            cleanup(path)
+        }
+    }
+
+    @Test fun `loaded reindex cases are non-empty`() {
+        assertTrue(Spec.reindex.cases.isNotEmpty(), "reindex.json had zero cases")
     }
 
     @Test fun `loaded normalize cases are non-empty`() {

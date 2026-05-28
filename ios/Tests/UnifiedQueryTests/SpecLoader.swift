@@ -11,6 +11,7 @@ enum Spec {
 
     static let normalize: NormalizeSpec = load("normalize")
     static let search: SearchSpecFile = load("search")
+    static let reindex: ReindexSpecFile = load("reindex")
 
     private static let repoRoot: URL = {
         // .../ios/Tests/UnifiedQueryTests/SpecLoader.swift → go up 4 levels to reach the repo root.
@@ -117,4 +118,30 @@ struct SearchSpecFile: Decodable, Sendable {
         case scenarios
         case seededMatrices = "seeded_matrices"
     }
+}
+
+// MARK: - reindex.json
+
+/// One regeneration case: index under `configBefore`, reopen under `configAfter`
+/// (via `withConfigRebuilding`), and assert search results before and after the
+/// rebuild. Reuses `IndexOp` for `ops` and `Assertion` for the `before`/`after`
+/// checks.
+struct ReindexCase: Decodable, Sendable {
+    let id: String
+    let description: String
+    let configBefore: SpecConfig?
+    let configAfter: SpecConfig?
+    let ops: [IndexOp]
+    let before: [Assertion]
+    let after: [Assertion]
+    enum CodingKeys: String, CodingKey {
+        case id, description, ops, before, after
+        case configBefore = "config_before"
+        case configAfter = "config_after"
+    }
+}
+
+struct ReindexSpecFile: Decodable, Sendable {
+    let version: Int
+    let cases: [ReindexCase]
 }

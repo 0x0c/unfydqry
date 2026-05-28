@@ -50,13 +50,16 @@ fn strategy_from(s: Option<&str>) -> SearchStrategy {
     }
 }
 
-fn engine_for(config: &Option<SpecConfig>) -> std::sync::Arc<SearchEngine> {
+fn ec_from(config: &Option<SpecConfig>) -> EngineConfig {
     let cfg = config.as_ref();
-    let ec = EngineConfig {
+    EngineConfig {
         normalize: profile_from(cfg.and_then(|c| c.normalize.as_deref())),
         strategy: strategy_from(cfg.and_then(|c| c.strategy.as_deref())),
-    };
-    SearchEngine::with_config(":memory:".to_string(), ec).expect("open engine")
+    }
+}
+
+fn engine_for(config: &Option<SpecConfig>) -> std::sync::Arc<SearchEngine> {
+    SearchEngine::with_config(":memory:".to_string(), ec_from(config)).expect("open engine")
 }
 
 fn spec_dir() -> PathBuf {
@@ -233,5 +236,93 @@ fn seeded_matrices_match() {
                 m.id, q.query, q.description, got, want
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// reindex.json
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ReindexCase {
+    id: String,
+    description: String,
+    #[serde(default)]
+    config_before: Option<SpecConfig>,
+    #[serde(default)]
+    config_after: Option<SpecConfig>,
+    ops: Vec<IndexOp>,
+    before: Vec<Assertion>,
+    after: Vec<Assertion>,
+}
+
+#[derive(Deserialize)]
+struct ReindexSpecFile {
+    version: u32,
+    cases: Vec<ReindexCase>,
+}
+
+fn assert_searches(
+    engine: &SearchEngine,
+    checks: &[Assertion],
+    case_id: &str,
+    desc: &str,
+    phase: &str,
+) {
+    for a in checks {
+        let hits = engine
+            .search(a.search.query.clone(), a.search.limit)
+            .expect("search");
+        let got: BTreeSet<i64> = hits.iter().map(|h| h.id).collect();
+        let want: BTreeSet<i64> = a.expected_ids.iter().copied().collect();
+        assert_eq!(
+            got, want,
+            "reindex id={case_id} [{phase}]: {desc}\n  query={:?}\n  got={:?}\n  want={:?}",
+            a.search.query, got, want
+        );
+    }
+}
+
+fn cleanup_db(path_base: &str) {
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{path_base}{suffix}"));
+    }
+}
+
+#[test]
+fn reindex_spec_matches() {
+    let spec: ReindexSpecFile = read_spec("reindex");
+    assert_eq!(
+        spec.version, EXPECTED_VERSION,
+        "spec/reindex.json version mismatch — loader expects {EXPECTED_VERSION}",
+    );
+    assert!(!spec.cases.is_empty(), "spec/reindex.json had zero cases");
+
+    for c in spec.cases {
+        let path = std::env::temp_dir().join(format!(
+            "unfydqry_reindex_{}_{}.sqlite",
+            c.id,
+            std::process::id()
+        ));
+        let path = path.to_string_lossy().to_string();
+        cleanup_db(&path); // clear any leftover from a previous run
+
+        // Index under the before-profile and pin the pre-rebuild behaviour.
+        // The engine is dropped at the end of this block so the connection is
+        // released before reopening the same file.
+        {
+            let before = SearchEngine::with_config(path.clone(), ec_from(&c.config_before))
+                .expect("open before");
+            apply_ops(&before, &c.ops);
+            assert_searches(&before, &c.before, &c.id, &c.description, "before");
+        }
+        // Reopen under the after-profile; a profile change regenerates the index
+        // from the retained raw text instead of erroring.
+        let after = SearchEngine::with_config_rebuilding(path.clone(), ec_from(&c.config_after))
+            .expect("open after (rebuilding)");
+        assert_searches(&after, &c.after, &c.id, &c.description, "after");
+
+        drop(after);
+        cleanup_db(&path);
     }
 }

@@ -31,6 +31,7 @@ object Spec {
 
     val normalize: NormalizeSpec = mapper.readValue(dir.resolve("normalize.json"))
     val search: SearchSpecFile = mapper.readValue(dir.resolve("search.json"))
+    val reindex: ReindexSpecFile = mapper.readValue(dir.resolve("reindex.json"))
 }
 
 // normalize.json
@@ -104,4 +105,26 @@ data class SearchSpecFile(
     val version: Int,
     val scenarios: List<Scenario>,
     @JsonProperty("seeded_matrices") val seededMatrices: List<SeededMatrix>,
+)
+
+// reindex.json
+
+/**
+ * One regeneration case: index under [configBefore], reopen under [configAfter]
+ * (via `withConfigRebuilding`), and assert search results before and after the
+ * rebuild. Reuses [IndexOp] for `ops` and [Assertion] for the before/after checks.
+ */
+data class ReindexCase(
+    val id: String,
+    val description: String,
+    @JsonProperty("config_before") val configBefore: SpecConfig? = null,
+    @JsonProperty("config_after") val configAfter: SpecConfig? = null,
+    val ops: List<IndexOp>,
+    val before: List<Assertion>,
+    val after: List<Assertion>,
+)
+
+data class ReindexSpecFile(
+    val version: Int,
+    val cases: List<ReindexCase>,
 )

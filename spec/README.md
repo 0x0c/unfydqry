@@ -14,6 +14,7 @@ Background and rationale: see [`../docs/cross-platform-search-engine-design.md`]
 |---|---|
 | `normalize.json` | `normalize(input, profile)` pure `(input → expected)` cases incl. the design-doc §2.2 trace table. |
 | `search.json` | `SearchEngine` scenarios (a sequence of `ops` followed by `assertions`) and `seeded_matrices` (shared seed reused across many queries). |
+| `reindex.json` | In-place index regeneration: index under one profile, reopen under another via `withConfigRebuilding`, and assert the search results before and after the rebuild. |
 
 ## Optional behaviour selectors
 
@@ -121,6 +122,35 @@ Loader pseudocode:
 
 `ops` is a tagged union — `"op": "index"` requires `id` + `text`, `"op": "remove"`
 requires `id` only.
+
+### `reindex.json`
+
+```jsonc
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "...",
+      "description": "...",
+      "config_before": {"normalize": <profile>, "strategy": <strategy>},
+      "config_after":  {"normalize": <profile>, "strategy": <strategy>},
+      "ops": [ {"op": "index", "id": <i64>, "text": "<string>"} ],
+      "before": [ {"search": {"query": "<string>", "limit": <u32>}, "expected_ids": [<i64>, ...]} ],
+      "after":  [ {"search": {"query": "<string>", "limit": <u32>}, "expected_ids": [<i64>, ...]} ]
+    }
+  ]
+}
+```
+
+Loader pseudocode: open a **persistent** (temp-file, not in-memory) engine with
+`withConfig(config_before)`, replay `ops`, assert every `before` check, then
+close it and reopen the same path with `withConfigRebuilding(config_after)` and
+assert every `after` check. A profile change makes `withConfigRebuilding`
+re-normalize the retained raw text under the new profile, so `before` pins the
+pre-rebuild behaviour and `after` pins the regenerated behaviour. `config_before`
+/ `config_after` reuse the same optional shape as `search.json`'s `config`, and
+each `before` / `after` entry reuses the `assertions` shape (`search` +
+`expected_ids`).
 
 ## What's deliberately *not* here
 
