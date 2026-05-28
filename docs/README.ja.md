@@ -29,7 +29,7 @@ unfydqry/
 │   ├── Cargo.toml
 │   ├── src/lib.rs               FFI 公開面(コンストラクタ、normalize* エクスポート)
 │   ├── src/config.rs           NormalizeProfile / SearchStrategy / EngineConfig
-│   ├── src/engine.rs           SearchEngine(index/search/remove、プロファイル指紋)
+│   ├── src/engine.rs           SearchEngine(index/search/remove/reindex、生テキスト保存、プロファイル指紋)
 │   ├── src/normalize/          差し替え可能な正規化プロファイル
 │   ├── src/search/             差し替え可能な検索アルゴリズム(trigram_bm25/substring/prefix/suffix/all_terms/fuzzy_trigram/levenshtein/damerau_levenshtein)
 │   ├── src/bin/uniffi-bindgen.rs
@@ -90,10 +90,11 @@ val hits = engine.search("python", 50u)
 
 ## 挙動のカスタマイズ
 
-`SearchEngine` にはコンストラクタが2つある。**組み合わせはバインディング側で選ぶ**が、実装はすべて Rust コア(`core/src/normalize/`、`core/src/search/`)にあるため、選択によって iOS と Android が食い違うことはない。
+`SearchEngine` にはコンストラクタが3つある。**組み合わせはバインディング側で選ぶ**が、実装はすべて Rust コア(`core/src/normalize/`、`core/src/search/`)にあるため、選択によって iOS と Android が食い違うことはない。
 
 - `SearchEngine(dbPath:)` — 既定の組み合わせ `loose` + `trigram_bm25`。従来と同じなので既存の呼び出しはそのまま動く
-- `SearchEngine.withConfig(dbPath:, config:)` — 正規化プロファイルと検索アルゴリズムを明示的に指定
+- `SearchEngine.withConfig(dbPath:, config:)` — 正規化プロファイルと検索アルゴリズムを明示的に指定。*別の*プロファイルで既存インデックスを開くとエラーになる(下記参照)
+- `SearchEngine.withConfigRebuilding(dbPath:, config:)` — `withConfig` と同じだが、プロファイル変更時にエラーにせずインデックスをその場で再生成する(下記[インデックスの再生成](#正規化変更後のインデックス再生成)を参照)
 
 ### 正規化プロファイル(`NormalizeProfile`)
 
@@ -106,7 +107,16 @@ val hits = engine.search("python", 50u)
 
 どちらのプロファイルでも濁点・半濁点は区別する(`か` ≠ `が`)。
 
-> 有効なプロファイルはインデックスの `meta` テーブルに指紋として記録される。*別の*プロファイルで既存インデックスを開くと、誤った結果を黙って返す代わりに `ConfigMismatch` を投げる — プロファイルを切り替えるにはインデックスを作り直す(このフィールドが無かった頃のインデックスは `loose` として扱う)。
+> 有効なプロファイルはインデックスの `meta` テーブルに指紋として記録される。*別の*プロファイルで既存インデックスを開くと、誤った結果を黙って返す代わりに `ConfigMismatch` を投げる — プロファイルを切り替えるにはインデックスを再生成する(下記参照。このフィールドが無かった頃のインデックスは `loose` として扱う)。
+
+### 正規化変更後のインデックス再生成
+
+エンジンは各文書の**生テキスト**を正規化後の形と一緒に保存しているため、プロファイル(またはその規則)が変わってもインデックスをその場で再生成できる — ホストが文書を再投入する必要はない。
+
+- **明示的** — 開いているエンジンで `reindex()` を呼ぶ。保存済みの全文書をエンジンの現在のプロファイルで再正規化し、インデックスを書き換え、プロファイル指紋を再記録する。再生成した文書数を返す
+- **オープン時に自動** — `SearchEngine.withConfigRebuilding(dbPath:, config:)` はインデックスを開き、保存済みプロファイルが要求と異なる場合に `ConfigMismatch` を投げる代わりに同じ再生成を実行してから返す
+
+> 生テキスト保存より前にインデックスされた文書には再正規化できる生テキストが無く、再生成では手を加えない。
 
 ### 検索アルゴリズム(`SearchStrategy`)
 
@@ -279,7 +289,7 @@ Rust(`core/`):
 | ファイル | 層 | 備考 |
 |---|---|---|
 | `src/normalize/mod.rs` の `mod tests` | 1 — unit | 設計書 §2.2 のトレース表。濁点 / 半濁点の区別。`nfkc_case_fold` がかな種別を区別すること。 |
-| `src/engine.rs` の `mod tests` | 1 — unit | index / remove / 再 index / LIKE フォールバック / クォートエスケープ / 空クエリ。`prefix`・`substring` 戦略。プロファイル変更時の `ConfigMismatch`。 |
+| `src/engine.rs` の `mod tests` | 1 — unit | index / remove / 上書き index / LIKE フォールバック / クォートエスケープ / 空クエリ。`prefix`・`substring` 戦略。プロファイル変更時の `ConfigMismatch`。`reindex()` の件数と `withConfigRebuilding` による再生成。 |
 | `tests/conformance.rs` | 2 — spec 駆動 | Swift / Kotlin と同じ `spec/*.json` を、Rust API に直接当てる。FFI バインディングに依存せずコアのドリフトを検出する。 |
 
 native の query / lifecycle 層は **Rust 側には敢えて置いていない** — Rust

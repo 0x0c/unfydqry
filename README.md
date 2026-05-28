@@ -30,7 +30,7 @@ unfydqry/
 │   ├── Cargo.toml
 │   ├── src/lib.rs               FFI surface (constructors, normalize* exports)
 │   ├── src/config.rs           NormalizeProfile / SearchStrategy / EngineConfig
-│   ├── src/engine.rs           SearchEngine (index/search/remove, profile fingerprint)
+│   ├── src/engine.rs           SearchEngine (index/search/remove/reindex, raw-text retention, profile fingerprint)
 │   ├── src/normalize/          swappable normalization profiles
 │   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix/suffix/all_terms/fuzzy_trigram/levenshtein/damerau_levenshtein)
 │   ├── src/bin/uniffi-bindgen.rs
@@ -114,10 +114,11 @@ val hits = engine.search("python", 50u)
 
 ## Configuring behaviour
 
-`SearchEngine` has two constructors. The **combination is chosen on the binding side**; every implementation lives in the Rust core (`core/src/normalize/`, `core/src/search/`), so the choice can never make iOS and Android diverge.
+`SearchEngine` has three constructors. The **combination is chosen on the binding side**; every implementation lives in the Rust core (`core/src/normalize/`, `core/src/search/`), so the choice can never make iOS and Android diverge.
 
 - `SearchEngine(dbPath:)` — the default combination, `loose` + `trigram_bm25`. Unchanged from before, so existing callers keep working.
-- `SearchEngine.withConfig(dbPath:, config:)` — pick the normalization profile and the search algorithm explicitly.
+- `SearchEngine.withConfig(dbPath:, config:)` — pick the normalization profile and the search algorithm explicitly. Reopening an index under a *different* profile is an error (see below).
+- `SearchEngine.withConfigRebuilding(dbPath:, config:)` — same as `withConfig`, but a profile change regenerates the index in place instead of erroring (see [Regenerating the index](#regenerating-the-index-after-a-normalization-change)).
 
 ### Normalization profiles (`NormalizeProfile`)
 
@@ -130,7 +131,16 @@ The profile is applied identically at index time and query time.
 
 Both profiles keep dakuten / handakuten distinct (`か` ≠ `が`).
 
-> The active profile is fingerprinted into the index's `meta` table. Reopening an existing index with a *different* profile throws `ConfigMismatch` rather than silently returning wrong results — rebuild the index to switch profiles. (An index created before this field existed is treated as `loose`.)
+> The active profile is fingerprinted into the index's `meta` table. Reopening an existing index with a *different* profile throws `ConfigMismatch` rather than silently returning wrong results — regenerate the index to switch profiles (see below). (An index created before this field existed is treated as `loose`.)
+
+### Regenerating the index after a normalization change
+
+The engine stores each document's **raw text** alongside its normalized form, so the index can be regenerated in place when the profile (or its underlying rules) changes — the host does not re-feed documents.
+
+- **Explicit** — call `reindex()` on an open engine. It re-normalizes every stored document under the engine's current profile, rewrites the index, and re-stamps the profile fingerprint. Returns the number of documents regenerated.
+- **Automatic on open** — `SearchEngine.withConfigRebuilding(dbPath:, config:)` opens the index and, when the stored profile differs from the requested one, runs the same regeneration before returning instead of throwing `ConfigMismatch`.
+
+> Documents indexed before raw-text retention existed have no raw text to re-normalize and are left untouched by a regeneration.
 
 ### Search algorithms (`SearchStrategy`)
 
@@ -303,7 +313,7 @@ Rust (`core/`):
 | File | Layer | Notes |
 |---|---|---|
 | `src/normalize/mod.rs` `mod tests` | 1 — unit | Trace table from design doc §2.2; dakuten/handakuten distinctness; `nfkc_case_fold` keeps kana distinct. |
-| `src/engine.rs` `mod tests` | 1 — unit | Index / remove / reindex / LIKE fallback / quote escaping / empty query; `prefix` & `substring` strategies; `ConfigMismatch` on profile change. |
+| `src/engine.rs` `mod tests` | 1 — unit | Index / remove / re-index / LIKE fallback / quote escaping / empty query; `prefix` & `substring` strategies; `ConfigMismatch` on profile change; `reindex()` count and `withConfigRebuilding` regeneration. |
 | `tests/conformance.rs` | 2 — spec-driven | Same `spec/*.json` as Swift and Kotlin, asserted directly on the in-process Rust API. Catches core drift independently of either binding. |
 
 The native query/lifecycle layer is intentionally **not** mirrored in the
