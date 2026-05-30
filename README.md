@@ -51,8 +51,15 @@ unfydqry/
 │       ├── settings.gradle.kts  include(":app", ":unifiedquery")
 │       ├── app/                 Compose sample app
 │       └── unifiedquery/        JVM Kotlin library + JUnit 5 — 4 classes
+├── flutter/                     Flutter plugin (Dart package: unfydqry)
+│   ├── lib/unfydqry.dart        public Dart API (SearchEngine, Hit, SearchException)
+│   ├── ios/                     Swift plugin → UnifiedQuery.SearchEngine
+│   ├── android/                 Kotlin plugin → uniffi.unfydqry.SearchEngine
+│   ├── test/                    mock-channel Dart unit tests
+│   └── example/                 Flutter sample app (same 8-record seed)
 └── docs/
     ├── README.ja.md
+    ├── flutter-plugin.md
     └── cross-platform-search-engine-design.md
 ```
 
@@ -399,7 +406,20 @@ A change that breaks the Rust core should fail with **the same case `id`**
 on every platform simultaneously. If only one platform fails on a spec
 case, the loader on that platform is wrong — not the core.
 
-## Releasing a new iOS xcframework
+## Releasing
+
+Two release workflows live in `.github/workflows/`:
+
+| Artifact | Workflow | Trigger | Published to |
+|---|---|---|---|
+| iOS XCFramework | `release-xcframework.yml` | manual (tag input, e.g. `v0.1.0`) | GitHub Release asset (`UnifiedQuery.xcframework.zip`) |
+| Android AAR | `release-aar.yml` | version tag (`X.Y.Z`) or manual dispatch | Maven Central (`:unifiedquery` AAR) |
+
+The AAR workflow rebuilds `libunfydqry.so` for all three ABIs via `cargo-ndk`,
+verifies the committed Kotlin binding is in sync with the Rust core, then
+publishes the signed AAR through vanniktech-maven-publish.
+
+### iOS xcframework
 
 The xcframework is shipped via GitHub Releases, not committed to Git. To cut a
 new release:
@@ -431,16 +451,26 @@ attached zip. `main` is left unchanged.
 
 ## Advanced platform support
 
-Wrappers for additional runtimes are maintained on separate branches and
-documented independently:
+A **Flutter plugin** wraps the iOS and Android native bindings behind a Dart
+method-channel API. It now lives in-tree under `flutter/` (Dart package
+`unfydqry`) and its CI runs on `main` — see the Flutter Tests badge above. Full
+docs are in [`docs/flutter-plugin.md`](docs/flutter-plugin.md).
 
-| Runtime | Branch | Docs |
+| Runtime | Location | Docs |
 |---|---|---|
-| Flutter | `feat/flutter` | [`docs/flutter-plugin.md`](docs/flutter-plugin.md) |
+| Flutter | `flutter/` (Dart package `unfydqry`) | [`docs/flutter-plugin.md`](docs/flutter-plugin.md) |
 
-These are **not** included in the main distribution. They require native
-artifacts to be built first and are intended for teams already using those
-runtimes.
+The plugin is **not** part of the iOS/Android distribution: it requires the
+native artifacts (XCFramework + `.so`) to be built first and is intended for
+teams already using Flutter.
+
+```sh
+# Dart unit tests (mock method channel, no native artifacts required)
+cd flutter && flutter test
+
+# Sample app (build the native artifacts first — see docs/flutter-plugin.md)
+cd flutter/example && flutter run
+```
 
 ## License
 
