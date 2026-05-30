@@ -428,6 +428,19 @@ attached zip. `main` is left unchanged.
 | Android Gradle module | `:unifiedquery` |
 | Kotlin package | `uniffi.unfydqry` |
 
+## Advanced platform support
+
+Wrappers for additional runtimes are maintained on separate branches and
+documented independently:
+
+| Runtime | Branch | Docs |
+|---|---|---|
+| Flutter | `feat/flutter` | [`docs/flutter-plugin.md`](docs/flutter-plugin.md) |
+
+These are **not** included in the main distribution. They require native
+artifacts to be built first and are intended for teams already using those
+runtimes.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,3 @@
+<!-- The package/namespace is declared via `namespace` in build.gradle.kts.
+     AGP 8+ rejects a `package` attribute here. -->
+<manifest />
