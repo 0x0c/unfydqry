@@ -19,10 +19,10 @@ pub enum NormalizeProfile {
 
 impl NormalizeProfile {
     /// Stable identifier persisted in the `meta` table and used in spec JSON.
-    pub fn as_key(self) -> &'static str {
+    pub const fn as_key(self) -> &'static str {
         match self {
-            NormalizeProfile::Loose => "loose",
-            NormalizeProfile::NfkcCaseFold => "nfkc_case_fold",
+            Self::Loose => "loose",
+            Self::NfkcCaseFold => "nfkc_case_fold",
         }
     }
 
@@ -30,12 +30,12 @@ impl NormalizeProfile {
     /// as the foundation, so it is not represented as a toggle.
     pub fn options(self) -> NormalizeOptions {
         match self {
-            NormalizeProfile::Loose => NormalizeOptions {
+            Self::Loose => NormalizeOptions {
                 lowercase: true,
                 kana_fold: true,
                 ..NormalizeOptions::default()
             },
-            NormalizeProfile::NfkcCaseFold => NormalizeOptions {
+            Self::NfkcCaseFold => NormalizeOptions {
                 lowercase: true,
                 ..NormalizeOptions::default()
             },
@@ -43,10 +43,11 @@ impl NormalizeProfile {
     }
 }
 
-/// A composable set of normalization steps, all opt-in on top of the always-on
-/// NFKC foundation. The engine applies the enabled steps in a fixed canonical
-/// order (see `normalize/mod.rs`), so any combination is deterministic and
-/// identical across platforms.
+/// A composable set of normalization steps, all opt-in on top of NFKC.
+///
+/// The engine applies the enabled steps in a fixed canonical order (see
+/// `normalize/mod.rs`), so any combination is deterministic and identical
+/// across platforms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Record)]
 pub struct NormalizeOptions {
     /// Fold case via `char::to_lowercase`.

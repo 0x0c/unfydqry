@@ -3,8 +3,8 @@
 
 use rusqlite::Connection;
 
-use super::editdist::{osa, word_fuzzy_search};
 use super::SearchAlgorithm;
+use super::editdist::{osa, word_fuzzy_search};
 use crate::engine::{Hit, SearchError};
 
 pub struct DamerauLevenshtein;

@@ -7,7 +7,7 @@ pub use config::{
     EngineConfig, EngineOptionsConfig, NormalizeOptions, NormalizeProfile, SearchStrategy,
 };
 pub use engine::{
-    reindex_status, reindex_status_with_options, Hit, ReindexStatus, SearchEngine, SearchError,
+    Hit, ReindexStatus, SearchEngine, SearchError, reindex_status, reindex_status_with_options,
 };
 pub use normalize::{normalize, normalize_loose, normalize_options};
 

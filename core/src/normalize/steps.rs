@@ -119,12 +119,12 @@ pub fn collapse_whitespace(input: &str) -> String {
     out
 }
 
-fn is_kana(c: char) -> bool {
+const fn is_kana(c: char) -> bool {
     // Hiragana and Katakana blocks (covers small kana, ー, iteration marks).
     matches!(c as u32, 0x3041..=0x3096 | 0x309D..=0x309F | 0x30A1..=0x30FF)
 }
 
-fn is_kanji(c: char) -> bool {
+const fn is_kanji(c: char) -> bool {
     matches!(c as u32,
         0x3400..=0x4DBF      // CJK Ext A
         | 0x4E00..=0x9FFF    // CJK Unified
@@ -132,7 +132,7 @@ fn is_kanji(c: char) -> bool {
         | 0x20000..=0x2FFFF) // CJK Ext B+ (surrogate-pair ideographs)
 }
 
-fn is_dash(c: char) -> bool {
+const fn is_dash(c: char) -> bool {
     matches!(
         c,
         '\u{002D}'           // HYPHEN-MINUS
@@ -156,7 +156,7 @@ fn add_dakuten(c: char) -> char {
 
 /// Whether the base kana has a `+1` voiced form (か/さ/た/は rows and their
 /// katakana counterparts). `う`→`ゔ` is non-adjacent and intentionally excluded.
-fn is_voiceable_kana(c: char) -> bool {
+const fn is_voiceable_kana(c: char) -> bool {
     matches!(
         c,
         // Hiragana: か き く け こ さ し す せ そ た ち つ て と は ひ ふ へ ほ

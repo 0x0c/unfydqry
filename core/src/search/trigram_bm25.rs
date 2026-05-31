@@ -1,6 +1,6 @@
 //! Trigram FTS5 + bm25, with a LIKE fallback for queries shorter than 3 chars.
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::SearchAlgorithm;
 use crate::engine::{Hit, SearchError};
