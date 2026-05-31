@@ -224,6 +224,29 @@ cargo test --all-targets         # unit + conformance
 cargo build --release
 ```
 
+### Benchmarks
+
+The Rust core includes [Criterion](https://github.com/bheisler/criterion.rs) benchmarks covering search, indexing, and normalization. All benchmarks use an in-memory SQLite database with deterministically generated Japanese text.
+
+```sh
+cd core
+
+# Run all benchmarks
+cargo bench
+
+# Run a specific benchmark suite
+cargo bench --bench search       # search strategies (8 strategies × 3 corpus sizes × 3 query lengths)
+cargo bench --bench index        # bulk index, single append, and reindex
+cargo bench --bench normalize    # normalization profiles and individual steps
+
+# Filter to a specific group or case
+cargo bench -- "search/trigram_bm25"
+cargo bench -- "index/bulk"
+cargo bench -- "normalize/profile"
+```
+
+After the first run, Criterion saves baseline results under `core/target/criterion/`. Subsequent runs compare against the baseline and report regressions. HTML reports are generated at `core/target/criterion/report/index.html`.
+
 ### iOS (SwiftPM + Xcode sample)
 ```sh
 # Build for all 4 Apple targets, regenerate the Swift binding, assemble the
