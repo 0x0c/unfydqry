@@ -1,0 +1,111 @@
+name: Rust Benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "core/**"
+      - ".github/workflows/rust-bench.yml"
+  workflow_dispatch:
+
+# Only the latest run per PR matters; cancel superseded ones.
+concurrency:
+  group: rust-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+# Stage 1 runs untrusted PR code, so it gets a read-only token and never
+# touches the PR. The bench report is handed to the privileged "comment"
+# workflow (workflow_run) via an artifact, which is what lets fork PRs get a
+# comment without exposing a write token to untrusted code.
+permissions:
+  contents: read
+
+jobs:
+  bench-compare:
+    name: criterion compare (PR vs base)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Shorter measurement/warm-up than Criterion's defaults: shared CI runners
+    # are noisy, so this trades absolute precision for a usable wall-clock time.
+    # Enough to surface regressions, not to publish absolute numbers.
+    env:
+      CRITERION_ARGS: "--measurement-time 2 --warm-up-time 1"
+      # The three Criterion (harness = false) bench targets. Listed explicitly
+      # rather than via --benches so the libtest harness on the lib/bin targets
+      # — which doesn't understand --save-baseline — is never invoked.
+      BENCHES: "--bench search --bench index --bench normalize"
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Need the base commit available locally to bench it.
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: core
+
+      - name: Install critcmp
+        run: cargo install critcmp --locked
+
+      # Bench the PR head first, saving a named baseline. Criterion writes
+      # baselines under core/target/criterion/, which survives the git checkout
+      # below since target/ is not tracked.
+      - name: Bench PR
+        working-directory: core
+        run: cargo bench $BENCHES -- --save-baseline pr $CRITERION_ARGS
+
+      - name: Check out base commit
+        run: git checkout --force ${{ github.event.pull_request.base.sha }}
+
+      # The base branch may predate the benchmarks (or a given bench). Don't fail
+      # the job in that case — we just won't have a baseline to compare against.
+      - name: Bench base
+        id: bench_base
+        working-directory: core
+        continue-on-error: true
+        run: cargo bench $BENCHES -- --save-baseline base $CRITERION_ARGS
+
+      - name: Build comparison report
+        working-directory: core
+        run: |
+          {
+            echo "## Criterion benchmark comparison"
+            echo ""
+            echo "PR \`${{ github.event.pull_request.head.sha }}\` vs base \`${{ github.event.pull_request.base.sha }}\`."
+            echo "_Measured with \`$CRITERION_ARGS\` on a shared CI runner — treat small (<10%) deltas as noise._"
+            echo ""
+            if [ "${{ steps.bench_base.outcome }}" != "success" ]; then
+              echo "> ⚠️ Could not benchmark the base commit (it may predate these benchmarks). No comparison available."
+            else
+              echo '```'
+              # critcmp lists every group; the threshold only colours/orders
+              # output, it does not hide rows. Full table for the reviewer.
+              critcmp base pr
+              echo '```'
+            fi
+          } > "$RUNNER_TEMP/report.md"
+          # Mirror to the job summary too, so the numbers are visible directly
+          # on this run even before the comment workflow posts them.
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # The PR number isn't available to the workflow_run event, so pass it
+      # alongside the report. (pull_request.number is empty for workflow_dispatch,
+      # which simply yields no comment downstream.)
+      - name: Record PR number
+        run: echo "${{ github.event.pull_request.number }}" > "$RUNNER_TEMP/pr-number.txt"
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-report
+          path: |
+            ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/pr-number.txt
+          retention-days: 7

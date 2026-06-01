@@ -1,0 +1,58 @@
+name: Rust Benchmarks Comment
+
+# Stage 2 of the benchmark pipeline. It runs *from the base branch* (trusted
+# code) after "Rust Benchmarks" finishes, so it can hold a write token without
+# ever executing untrusted PR code. This is what lets fork PRs receive a
+# comment — stage 1 produces the report under a read-only token, stage 2 posts
+# it. See .github/workflows/rust-bench.yml.
+on:
+  workflow_run:
+    workflows: ["Rust Benchmarks"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: post benchmark comment
+    runs-on: ubuntu-latest
+    # Only for runs triggered by a pull request; skip workflow_dispatch etc.
+    if: github.event.workflow_run.event == 'pull_request'
+
+    steps:
+      - name: Download report artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bench-report
+          path: report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Post or update PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          pr_number=$(cat report/pr-number.txt)
+          if [ -z "$pr_number" ]; then
+            echo "No PR number in artifact; nothing to comment on."
+            exit 0
+          fi
+
+          marker="<!-- rust-bench-report -->"
+          body="$marker"$'\n'"$(cat report/report.md)"
+
+          # Sticky comment: update the existing report comment if present,
+          # otherwise create a new one — so each run refreshes the same comment.
+          existing=$(gh api "repos/$REPO/issues/$pr_number/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" >/dev/null
+            echo "Updated comment $existing on PR #$pr_number."
+          else
+            gh api --method POST "repos/$REPO/issues/$pr_number/comments" -f body="$body" >/dev/null
+            echo "Created comment on PR #$pr_number."
+          fi
