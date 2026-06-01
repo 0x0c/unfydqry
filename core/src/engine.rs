@@ -119,6 +119,7 @@ impl SearchEngine {
                  USING fts5(norm, tokenize='trigram');
              CREATE TABLE IF NOT EXISTS entries(
                  id INTEGER PRIMARY KEY, norm TEXT NOT NULL, raw TEXT);
+             CREATE INDEX IF NOT EXISTS idx_entries_norm ON entries(norm);
              CREATE TABLE IF NOT EXISTS meta(
                  key TEXT PRIMARY KEY, value TEXT NOT NULL);",
         )?;
@@ -476,6 +477,58 @@ mod tests {
             },
         )
         .expect("open")
+    }
+
+    #[test]
+    fn prefix_range_scan_matches_japanese_text() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "とうきょう".into()).unwrap();
+        e.index(2, "とうほく".into()).unwrap();
+        e.index(3, "おおさか".into()).unwrap();
+
+        // "とう" should match both Tokyo and Tohoku, but not Osaka.
+        let hits = e.search("とう".into(), 10).unwrap();
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<i64> = hits.iter().map(|h| h.id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+    }
+
+    #[test]
+    fn prefix_range_scan_no_mid_string_match() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "abcdef".into()).unwrap();
+        e.index(2, "xyzabc".into()).unwrap();
+
+        // "abc" should match doc 1 (prefix) but not doc 2 (mid-string).
+        let hits = e.search("abc".into(), 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, 1);
+    }
+
+    #[test]
+    fn prefix_range_scan_exact_match() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "hello".into()).unwrap();
+        e.index(2, "hello world".into()).unwrap();
+        e.index(3, "help".into()).unwrap();
+
+        // Exact query should match the doc with identical text.
+        let hits = e.search("hello".into(), 10).unwrap();
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<i64> = hits.iter().map(|h| h.id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+    }
+
+    #[test]
+    fn prefix_range_scan_no_match() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "apple".into()).unwrap();
+        e.index(2, "banana".into()).unwrap();
+
+        let hits = e.search("cherry".into(), 10).unwrap();
+        assert!(hits.is_empty());
     }
 
     #[test]
