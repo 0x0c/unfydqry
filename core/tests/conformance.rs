@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use unfydqry::{
-    normalize, normalize_options, EngineConfig, EngineOptionsConfig, NormalizeOptions,
-    NormalizeProfile, SearchEngine, SearchStrategy,
+    EngineConfig, EngineOptionsConfig, NormalizeOptions, NormalizeProfile, SearchEngine,
+    SearchStrategy, normalize, normalize_options,
 };
 
 const EXPECTED_VERSION: u32 = 3;

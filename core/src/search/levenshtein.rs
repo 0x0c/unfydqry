@@ -2,8 +2,8 @@
 
 use rusqlite::Connection;
 
-use super::editdist::{levenshtein, word_fuzzy_search};
 use super::SearchAlgorithm;
+use super::editdist::{levenshtein, word_fuzzy_search};
 use crate::engine::{Hit, SearchError};
 
 pub struct Levenshtein;

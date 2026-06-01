@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::config::{EngineConfig, EngineOptionsConfig, NormalizeOptions, SearchStrategy};
-use crate::normalize::{build_normalizer_options, Normalizer};
-use crate::search::{build_strategy, SearchAlgorithm};
+use crate::normalize::{Normalizer, build_normalizer_options};
+use crate::search::{SearchAlgorithm, build_strategy};
 
 /// A single search result: the stable `id` the host indexed under, plus a
 /// relevance `score`.
@@ -33,15 +33,13 @@ pub enum SearchError {
     /// than the one requested. Indexed text is profile-specific, so the index
     /// must be rebuilt to change profiles. `stored` is the profile recorded in
     /// the index; `requested` is the one just asked for.
-    #[error(
-        "index built with normalize profile {stored}, requested {requested}; rebuild required"
-    )]
+    #[error("index built with normalize profile {stored}, requested {requested}; rebuild required")]
     ConfigMismatch { stored: String, requested: String },
 }
 
 impl From<rusqlite::Error> for SearchError {
     fn from(e: rusqlite::Error) -> Self {
-        SearchError::Db(e.to_string())
+        Self::Db(e.to_string())
     }
 }
 
@@ -305,6 +303,7 @@ impl SearchEngine {
             "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
             params![id, &norm, &text],
         )?;
+        drop(conn);
         Ok(())
     }
 
@@ -316,6 +315,7 @@ impl SearchEngine {
     /// re-feeding them. Documents indexed before raw text was retained have no
     /// raw to normalize and are skipped. Returns the number of documents
     /// regenerated.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
     pub fn reindex(&self) -> Result<u64, SearchError> {
         let conn = self.conn.lock().unwrap();
         let rows: Vec<(i64, String)> = {
@@ -345,6 +345,7 @@ impl SearchEngine {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
         conn.execute("DELETE FROM entries WHERE id=?1", params![id])?;
+        drop(conn);
         Ok(())
     }
 

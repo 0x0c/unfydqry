@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureInitialized()
+    uniffiEnsureUnfydqryInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -352,18 +352,29 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-fileprivate class UniffiHandleMap<T> {
-    private var map: [UInt64: T] = [:]
+// Initial value and increment amount for handles. 
+// These ensure that SWIFT handles always have the lowest bit set
+fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
+fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
+
+fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
+    // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
     private let lock = NSLock()
-    private var currentHandle: UInt64 = 1
+    private var map: [UInt64: T] = [:]
+    private var currentHandle: UInt64 = UNIFFI_HANDLEMAP_INITIAL
 
     func insert(obj: T) -> UInt64 {
         lock.withLock {
-            let handle = currentHandle
-            currentHandle += 1
-            map[handle] = obj
-            return handle
+            return doInsert(obj)
         }
+    }
+
+    // Low-level insert function, this assumes `lock` is held.
+    private func doInsert(_ obj: T) -> UInt64 {
+        let handle = currentHandle
+        currentHandle += UNIFFI_HANDLEMAP_DELTA
+        map[handle] = obj
+        return handle
     }
 
      func get(handle: UInt64) throws -> T {
@@ -372,6 +383,15 @@ fileprivate class UniffiHandleMap<T> {
                 throw UniffiInternalError.unexpectedStaleHandle
             }
             return obj
+        }
+    }
+
+     func clone(handle: UInt64) throws -> UInt64 {
+        try lock.withLock {
+            guard let obj = map[handle] else {
+                throw UniffiInternalError.unexpectedStaleHandle
+            }
+            return doInsert(obj)
         }
     }
 
@@ -542,7 +562,7 @@ fileprivate struct FfiConverterString: FfiConverter {
  * via `reindex`, or automatically by opening with
  * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
-public protocol SearchEngineProtocol : AnyObject {
+public protocol SearchEngineProtocol: AnyObject, Sendable {
     
     /**
      * Adds, or replaces, the document stored under `id`.
@@ -582,7 +602,6 @@ public protocol SearchEngineProtocol : AnyObject {
     func search(query: String, limit: UInt32) throws  -> [Hit]
     
 }
-
 /**
  * A persistent full-text search index backed by SQLite.
  *
@@ -597,63 +616,66 @@ public protocol SearchEngineProtocol : AnyObject {
  * via `reindex`, or automatically by opening with
  * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
-open class SearchEngine:
-    SearchEngineProtocol {
-    fileprivate let pointer: UnsafeMutableRawPointer!
+open class SearchEngine: SearchEngineProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
 
-    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public struct NoPointer {
+    public struct NoHandle {
         public init() {}
     }
 
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
-    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
-        self.pointer = pointer
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
     }
 
     // This constructor can be used to instantiate a fake object.
-    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
     //
     // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public init(noPointer: NoPointer) {
-        self.pointer = nil
+    public init(noHandle: NoHandle) {
+        self.handle = 0
     }
 
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
-        return try! rustCall { uniffi_unfydqry_fn_clone_searchengine(self.pointer, $0) }
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_unfydqry_fn_clone_searchengine(self.handle, $0) }
     }
     /**
      * Opens the index with the default behaviour (loose normalization +
      * trigram/bm25). Kept for backward compatibility.
      */
 public convenience init(dbPath: String)throws  {
-    let pointer =
-        try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    let handle =
+        try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_constructor_searchengine_new(
         FfiConverterString.lower(dbPath),$0
     )
 }
-    self.init(unsafeFromRawPointer: pointer)
+    self.init(unsafeFromHandle: handle)
 }
 
     deinit {
-        guard let pointer = pointer else {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
             return
         }
 
-        try! rustCall { uniffi_unfydqry_fn_free_searchengine(pointer, $0) }
+        try! rustCall { uniffi_unfydqry_fn_free_searchengine(handle, $0) }
     }
 
     
@@ -667,11 +689,11 @@ public convenience init(dbPath: String)throws  {
      * failing, open with `withConfigRebuilding`, or call `reindex` on an
      * engine opened with the matching profile.
      */
-public static func withConfig(dbPath: String, config: EngineConfig)throws  -> SearchEngine {
-    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public static func withConfig(dbPath: String, config: EngineConfig)throws  -> SearchEngine  {
+    return try  FfiConverterTypeSearchEngine_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_constructor_searchengine_withconfig(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeEngineConfig.lower(config),$0
+        FfiConverterTypeEngineConfig_lower(config),$0
     )
 })
 }
@@ -685,11 +707,11 @@ public static func withConfig(dbPath: String, config: EngineConfig)throws  -> Se
      * new profile before returning. Documents indexed before raw text was
      * retained cannot be regenerated and are left untouched.
      */
-public static func withConfigRebuilding(dbPath: String, config: EngineConfig)throws  -> SearchEngine {
-    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public static func withConfigRebuilding(dbPath: String, config: EngineConfig)throws  -> SearchEngine  {
+    return try  FfiConverterTypeSearchEngine_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_constructor_searchengine_withconfigrebuilding(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeEngineConfig.lower(config),$0
+        FfiConverterTypeEngineConfig_lower(config),$0
     )
 })
 }
@@ -700,11 +722,11 @@ public static func withConfigRebuilding(dbPath: String, config: EngineConfig)thr
      * with the stored index is a `ConfigMismatch`; use `withOptionsRebuilding`
      * to regenerate instead.
      */
-public static func withOptions(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine {
-    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public static func withOptions(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine  {
+    return try  FfiConverterTypeSearchEngine_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_constructor_searchengine_withoptions(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeEngineOptionsConfig.lower(config),$0
+        FfiConverterTypeEngineOptionsConfig_lower(config),$0
     )
 })
 }
@@ -714,11 +736,11 @@ public static func withOptions(dbPath: String, config: EngineOptionsConfig)throw
      * `NormalizeOptions` set. A change in the enabled steps regenerates the
      * index in place from the retained raw text.
      */
-public static func withOptionsRebuilding(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine {
-    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public static func withOptionsRebuilding(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine  {
+    return try  FfiConverterTypeSearchEngine_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeEngineOptionsConfig.lower(config),$0
+        FfiConverterTypeEngineOptionsConfig_lower(config),$0
     )
 })
 }
@@ -732,8 +754,9 @@ public static func withOptionsRebuilding(dbPath: String, config: EngineOptionsCo
      * engine's profile is applied identically to indexed text and to queries.
      * Calling `index` again with an existing `id` overwrites that document.
      */
-open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_unfydqry_fn_method_searchengine_index(self.uniffiClonePointer(),
+open func index(id: Int64, text: String)throws   {try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_index(
+            self.uniffiCloneHandle(),
         FfiConverterInt64.lower(id),
         FfiConverterString.lower(text),$0
     )
@@ -750,9 +773,10 @@ open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConver
      * raw to normalize and are skipped. Returns the number of documents
      * regenerated.
      */
-open func reindex()throws  -> UInt64 {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_unfydqry_fn_method_searchengine_reindex(self.uniffiClonePointer(),$0
+open func reindex()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_reindex(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -761,8 +785,9 @@ open func reindex()throws  -> UInt64 {
      * Removes the document stored under `id`. A no-op if no such document
      * exists.
      */
-open func remove(id: Int64)throws  {try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_unfydqry_fn_method_searchengine_remove(self.uniffiClonePointer(),
+open func remove(id: Int64)throws   {try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_remove(
+            self.uniffiCloneHandle(),
         FfiConverterInt64.lower(id),$0
     )
 }
@@ -776,9 +801,10 @@ open func remove(id: Int64)throws  {try rustCallWithError(FfiConverterTypeSearch
      * once normalized — returns no hits. Ordering and scoring depend on the
      * strategy (see `Hit.score`).
      */
-open func search(query: String, limit: UInt32)throws  -> [Hit] {
-    return try  FfiConverterSequenceTypeHit.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_unfydqry_fn_method_searchengine_search(self.uniffiClonePointer(),
+open func search(query: String, limit: UInt32)throws  -> [Hit]  {
+    return try  FfiConverterSequenceTypeHit.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_search(
+            self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),$0
     )
@@ -786,64 +812,57 @@ open func search(query: String, limit: UInt32)throws  -> [Hit] {
 }
     
 
+    
 }
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
 public struct FfiConverterTypeSearchEngine: FfiConverter {
-
-    typealias FfiType = UnsafeMutableRawPointer
+    typealias FfiType = UInt64
     typealias SwiftType = SearchEngine
 
-    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> SearchEngine {
-        return SearchEngine(unsafeFromRawPointer: pointer)
+    public static func lift(_ handle: UInt64) throws -> SearchEngine {
+        return SearchEngine(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: SearchEngine) -> UnsafeMutableRawPointer {
-        return value.uniffiClonePointer()
+    public static func lower(_ value: SearchEngine) -> UInt64 {
+        return value.uniffiCloneHandle()
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchEngine {
-        let v: UInt64 = try readInt(&buf)
-        // The Rust code won't compile if a pointer won't fit in a UInt64.
-        // We have to go via `UInt` because that's the thing that's the size of a pointer.
-        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
-        if (ptr == nil) {
-            throw UniffiInternalError.unexpectedNullPointer
-        }
-        return try lift(ptr!)
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
     }
 
     public static func write(_ value: SearchEngine, into buf: inout [UInt8]) {
-        // This fiddling is because `Int` is the thing that's the same size as a pointer.
-        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
-        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+        writeInt(&buf, lower(value))
     }
 }
 
 
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSearchEngine_lift(_ pointer: UnsafeMutableRawPointer) throws -> SearchEngine {
-    return try FfiConverterTypeSearchEngine.lift(pointer)
+public func FfiConverterTypeSearchEngine_lift(_ handle: UInt64) throws -> SearchEngine {
+    return try FfiConverterTypeSearchEngine.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSearchEngine_lower(_ value: SearchEngine) -> UnsafeMutableRawPointer {
+public func FfiConverterTypeSearchEngine_lower(_ value: SearchEngine) -> UInt64 {
     return FfiConverterTypeSearchEngine.lower(value)
 }
+
+
 
 
 /**
  * The combination the host selects when constructing an engine.
  */
-public struct EngineConfig {
+public struct EngineConfig: Equatable, Hashable {
     /**
      * How text is normalized at both index and query time.
      */
@@ -865,27 +884,15 @@ public struct EngineConfig {
         self.normalize = normalize
         self.strategy = strategy
     }
+
+    
+
+    
 }
 
-
-
-extension EngineConfig: Equatable, Hashable {
-    public static func ==(lhs: EngineConfig, rhs: EngineConfig) -> Bool {
-        if lhs.normalize != rhs.normalize {
-            return false
-        }
-        if lhs.strategy != rhs.strategy {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(normalize)
-        hasher.combine(strategy)
-    }
-}
-
+#if compiler(>=6)
+extension EngineConfig: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -926,7 +933,7 @@ public func FfiConverterTypeEngineConfig_lower(_ value: EngineConfig) -> RustBuf
  * [`NormalizeOptions`] set instead of a named preset. Used by the
  * `withOptions` / `withOptionsRebuilding` constructors.
  */
-public struct EngineOptionsConfig {
+public struct EngineOptionsConfig: Equatable, Hashable {
     /**
      * The composable normalization steps applied at index and query time.
      */
@@ -948,27 +955,15 @@ public struct EngineOptionsConfig {
         self.normalize = normalize
         self.strategy = strategy
     }
+
+    
+
+    
 }
 
-
-
-extension EngineOptionsConfig: Equatable, Hashable {
-    public static func ==(lhs: EngineOptionsConfig, rhs: EngineOptionsConfig) -> Bool {
-        if lhs.normalize != rhs.normalize {
-            return false
-        }
-        if lhs.strategy != rhs.strategy {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(normalize)
-        hasher.combine(strategy)
-    }
-}
-
+#if compiler(>=6)
+extension EngineOptionsConfig: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1011,7 +1006,7 @@ public func FfiConverterTypeEngineOptionsConfig_lower(_ value: EngineOptionsConf
  * The engine returns only ids and scores — never the document text — so the
  * host re-fetches the full record from its own source-of-truth store.
  */
-public struct Hit {
+public struct Hit: Equatable, Hashable {
     /**
      * The id the document was indexed under (see `index`).
      */
@@ -1039,27 +1034,15 @@ public struct Hit {
         self.id = id
         self.score = score
     }
+
+    
+
+    
 }
 
-
-
-extension Hit: Equatable, Hashable {
-    public static func ==(lhs: Hit, rhs: Hit) -> Bool {
-        if lhs.id != rhs.id {
-            return false
-        }
-        if lhs.score != rhs.score {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(score)
-    }
-}
-
+#if compiler(>=6)
+extension Hit: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1096,12 +1079,13 @@ public func FfiConverterTypeHit_lower(_ value: Hit) -> RustBuffer {
 
 
 /**
- * A composable set of normalization steps, all opt-in on top of the always-on
- * NFKC foundation. The engine applies the enabled steps in a fixed canonical
- * order (see `normalize/mod.rs`), so any combination is deterministic and
- * identical across platforms.
+ * A composable set of normalization steps, all opt-in on top of NFKC.
+ *
+ * The engine applies the enabled steps in a fixed canonical order (see
+ * `normalize/mod.rs`), so any combination is deterministic and identical
+ * across platforms.
  */
-public struct NormalizeOptions {
+public struct NormalizeOptions: Equatable, Hashable {
     /**
      * Fold case via `char::to_lowercase`.
      */
@@ -1171,51 +1155,15 @@ public struct NormalizeOptions {
         self.stripDigitGrouping = stripDigitGrouping
         self.collapseWhitespace = collapseWhitespace
     }
+
+    
+
+    
 }
 
-
-
-extension NormalizeOptions: Equatable, Hashable {
-    public static func ==(lhs: NormalizeOptions, rhs: NormalizeOptions) -> Bool {
-        if lhs.lowercase != rhs.lowercase {
-            return false
-        }
-        if lhs.kanaFold != rhs.kanaFold {
-            return false
-        }
-        if lhs.foldDiacritics != rhs.foldDiacritics {
-            return false
-        }
-        if lhs.foldChoonpu != rhs.foldChoonpu {
-            return false
-        }
-        if lhs.expandIterationMarks != rhs.expandIterationMarks {
-            return false
-        }
-        if lhs.normalizeHyphens != rhs.normalizeHyphens {
-            return false
-        }
-        if lhs.stripDigitGrouping != rhs.stripDigitGrouping {
-            return false
-        }
-        if lhs.collapseWhitespace != rhs.collapseWhitespace {
-            return false
-        }
-        return true
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(lowercase)
-        hasher.combine(kanaFold)
-        hasher.combine(foldDiacritics)
-        hasher.combine(foldChoonpu)
-        hasher.combine(expandIterationMarks)
-        hasher.combine(normalizeHyphens)
-        hasher.combine(stripDigitGrouping)
-        hasher.combine(collapseWhitespace)
-    }
-}
-
+#if compiler(>=6)
+extension NormalizeOptions: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1270,7 +1218,7 @@ public func FfiConverterTypeNormalizeOptions_lower(_ value: NormalizeOptions) ->
  * `Loose` is the original behaviour (NFKC → katakana→hiragana → lowercase).
  */
 
-public enum NormalizeProfile {
+public enum NormalizeProfile: Equatable, Hashable {
     
     /**
      * The original behaviour: NFKC, then katakana→hiragana, then lowercase,
@@ -1281,8 +1229,16 @@ public enum NormalizeProfile {
      * NFKC + lowercase only; kana variants are kept distinct.
      */
     case nfkcCaseFold
+
+
+
+
+
 }
 
+#if compiler(>=6)
+extension NormalizeProfile: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1333,11 +1289,6 @@ public func FfiConverterTypeNormalizeProfile_lower(_ value: NormalizeProfile) ->
 }
 
 
-
-extension NormalizeProfile: Equatable, Hashable {}
-
-
-
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -1345,7 +1296,7 @@ extension NormalizeProfile: Equatable, Hashable {}
  * regenerating first. Returned by `reindexStatus` / `reindexStatusWithOptions`.
  */
 
-public enum ReindexStatus {
+public enum ReindexStatus: Equatable, Hashable {
     
     /**
      * The index holds no documents; any normalization can be adopted freely
@@ -1363,8 +1314,16 @@ public enum ReindexStatus {
      * `withConfigRebuilding`, or `withOptionsRebuilding`) before use.
      */
     case configChanged
+
+
+
+
+
 }
 
+#if compiler(>=6)
+extension ReindexStatus: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1422,15 +1381,10 @@ public func FfiConverterTypeReindexStatus_lower(_ value: ReindexStatus) -> RustB
 
 
 
-extension ReindexStatus: Equatable, Hashable {}
-
-
-
-
 /**
  * An error surfaced across the FFI boundary by `SearchEngine`.
  */
-public enum SearchError {
+public enum SearchError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
     
     
@@ -1448,8 +1402,21 @@ public enum SearchError {
      */
     case ConfigMismatch(stored: String, requested: String
     )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
 }
 
+#if compiler(>=6)
+extension SearchError: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1498,12 +1465,18 @@ public struct FfiConverterTypeSearchError: FfiConverterRustBuffer {
 }
 
 
-extension SearchError: Equatable, Hashable {}
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchError_lift(_ buf: RustBuffer) throws -> SearchError {
+    return try FfiConverterTypeSearchError.lift(buf)
+}
 
-extension SearchError: Foundation.LocalizedError {
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchError_lower(_ value: SearchError) -> RustBuffer {
+    return FfiConverterTypeSearchError.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -1512,7 +1485,7 @@ extension SearchError: Foundation.LocalizedError {
  * Which query algorithm `SearchEngine::search` uses.
  */
 
-public enum SearchStrategy {
+public enum SearchStrategy: Equatable, Hashable {
     
     /**
      * Trigram FTS5 + bm25, with a LIKE fallback for queries shorter than 3 chars.
@@ -1546,8 +1519,16 @@ public enum SearchStrategy {
      * Like `Levenshtein`, but an adjacent transposition counts as one edit.
      */
     case damerauLevenshtein
+
+
+
+
+
 }
 
+#if compiler(>=6)
+extension SearchStrategy: Sendable {}
+#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1634,11 +1615,6 @@ public func FfiConverterTypeSearchStrategy_lower(_ value: SearchStrategy) -> Rus
 }
 
 
-
-extension SearchStrategy: Equatable, Hashable {}
-
-
-
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1671,7 +1647,7 @@ fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
  * queries by default; exposed so a host can preview or debug how a string
  * will be folded before searching.
  */
-public func normalizeLoose(input: String) -> String {
+public func normalizeLoose(input: String) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_unfydqry_fn_func_normalizeloose(
         FfiConverterString.lower(input),$0
@@ -1683,22 +1659,22 @@ public func normalizeLoose(input: String) -> String {
  * transform the engine applies when opened via `withOptions`. Exposed so a
  * host can preview how a string folds under a given combination of steps.
  */
-public func normalizeWithOptions(input: String, options: NormalizeOptions) -> String {
+public func normalizeWithOptions(input: String, options: NormalizeOptions) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_unfydqry_fn_func_normalizewithoptions(
         FfiConverterString.lower(input),
-        FfiConverterTypeNormalizeOptions.lower(options),$0
+        FfiConverterTypeNormalizeOptions_lower(options),$0
     )
 })
 }
 /**
  * Like `normalizeLoose`, but lets the caller pick the normalization profile.
  */
-public func normalizeWithProfile(input: String, profile: NormalizeProfile) -> String {
+public func normalizeWithProfile(input: String, profile: NormalizeProfile) -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_unfydqry_fn_func_normalizewithprofile(
         FfiConverterString.lower(input),
-        FfiConverterTypeNormalizeProfile.lower(profile),$0
+        FfiConverterTypeNormalizeProfile_lower(profile),$0
     )
 })
 }
@@ -1708,22 +1684,22 @@ public func normalizeWithProfile(input: String, profile: NormalizeProfile) -> St
  * `UpToDate`/`Empty`) and `withConfigRebuilding` / `reindex` (when
  * `ConfigChanged`) without first triggering a `ConfigMismatch` error.
  */
-public func reindexStatus(dbPath: String, config: EngineConfig)throws  -> ReindexStatus {
-    return try  FfiConverterTypeReindexStatus.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public func reindexStatus(dbPath: String, config: EngineConfig)throws  -> ReindexStatus  {
+    return try  FfiConverterTypeReindexStatus_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_func_reindexstatus(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeEngineConfig.lower(config),$0
+        FfiConverterTypeEngineConfig_lower(config),$0
     )
 })
 }
 /**
  * Like `reindexStatus`, but for a composable `NormalizeOptions` set.
  */
-public func reindexStatusWithOptions(dbPath: String, options: NormalizeOptions)throws  -> ReindexStatus {
-    return try  FfiConverterTypeReindexStatus.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+public func reindexStatusWithOptions(dbPath: String, options: NormalizeOptions)throws  -> ReindexStatus  {
+    return try  FfiConverterTypeReindexStatus_lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_func_reindexstatuswithoptions(
         FfiConverterString.lower(dbPath),
-        FfiConverterTypeNormalizeOptions.lower(options),$0
+        FfiConverterTypeNormalizeOptions_lower(options),$0
     )
 })
 }
@@ -1735,9 +1711,9 @@ private enum InitializationResult {
 }
 // Use a global variable to perform the versioning checks. Swift ensures that
 // the code inside is only computed once.
-private var initializationResult: InitializationResult = {
+private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 26
+    let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
     let scaffolding_contract_version = ffi_unfydqry_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
@@ -1746,50 +1722,52 @@ private var initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_func_normalizeloose() != 36363) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_func_normalizewithoptions() != 33141) {
+    if (uniffi_unfydqry_checksum_func_normalizewithoptions() != 41192) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_func_normalizewithprofile() != 49347) {
+    if (uniffi_unfydqry_checksum_func_normalizewithprofile() != 24929) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_func_reindexstatus() != 13108) {
+    if (uniffi_unfydqry_checksum_func_reindexstatus() != 2442) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 36594) {
+    if (uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 37208) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_index() != 36421) {
+    if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 31136) {
+    if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_remove() != 44114) {
+    if (uniffi_unfydqry_checksum_method_searchengine_remove() != 29881) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_search() != 59606) {
+    if (uniffi_unfydqry_checksum_method_searchengine_search() != 13991) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 487) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 18262) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 45331) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 47325) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 16805) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptions() != 4538) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptions() != 2915) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptionsrebuilding() != 9643) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptionsrebuilding() != 59715) {
         return InitializationResult.apiChecksumMismatch
     }
 
     return InitializationResult.ok
 }()
 
-private func uniffiEnsureInitialized() {
+// Make the ensure init function public so that other modules which have external type references to
+// our types can call it.
+public func uniffiEnsureUnfydqryInitialized() {
     switch initializationResult {
     case .ok:
         break

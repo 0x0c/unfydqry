@@ -2,7 +2,7 @@
 //! in any order. Distinct from `Substring`, which matches the whole query
 //! (including its spaces) as one contiguous run.
 
-use rusqlite::{params_from_iter, Connection, ToSql};
+use rusqlite::{Connection, ToSql, params_from_iter};
 
 use super::SearchAlgorithm;
 use crate::engine::{Hit, SearchError};

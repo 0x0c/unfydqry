@@ -1,6 +1,6 @@
 //! Suffix match (`LIKE '%q'`) for every query.
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use super::SearchAlgorithm;
 use crate::engine::{Hit, SearchError};
