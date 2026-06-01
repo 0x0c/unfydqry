@@ -3,6 +3,8 @@
 //! No external RNG crate — uses a simple LCG and fixed word lists to produce
 //! reproducible Japanese text that exercises every normalization step.
 
+#![allow(unused)]
+
 /// Words chosen to exercise specific normalization steps:
 /// - Katakana (kana_fold): サーバー, データベース, カフェ, プログラム, ネットワーク
 /// - Hiragana: とうきょう, おおさか, なごや, ふくおか, さっぽろ
