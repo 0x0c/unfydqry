@@ -532,6 +532,58 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_trigram_matches_similar_japanese() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "サーバー".into()).unwrap();
+        e.index(2, "データベース".into()).unwrap();
+        e.index(3, "completely unrelated".into()).unwrap();
+
+        // One-char typo: サーバ vs サーバー — should still match.
+        let hits = e.search("サーバ".into(), 10).unwrap();
+        assert!(
+            hits.iter().any(|h| h.id == 1),
+            "fuzzy_trigram should match サーバー for query サーバ"
+        );
+        assert!(
+            !hits.iter().any(|h| h.id == 3),
+            "fuzzy_trigram should not match unrelated doc"
+        );
+    }
+
+    #[test]
+    fn fuzzy_trigram_short_query_falls_back_to_full_scan() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "ab".into()).unwrap();
+        e.index(2, "cd".into()).unwrap();
+
+        // Query < 3 chars cannot use FTS5 trigram — falls back to full scan.
+        let hits = e.search("ab".into(), 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, 1);
+    }
+
+    #[test]
+    fn fuzzy_trigram_no_match_returns_empty() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "サーバー".into()).unwrap();
+
+        let hits = e.search("zzzzzzz".into(), 10).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_trigram_ranks_by_similarity() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "サーバー".into()).unwrap(); // exact match
+        e.index(2, "サーバーレス".into()).unwrap(); // partial overlap
+
+        let hits = e.search("サーバー".into(), 10).unwrap();
+        assert!(!hits.is_empty());
+        // Exact (or near-exact) match should have the lowest score.
+        assert_eq!(hits[0].id, 1, "exact match should rank first");
+    }
+
+    #[test]
     fn like_wildcard_percent_is_not_treated_as_wildcard() {
         for strategy in [
             SearchStrategy::Substring,
