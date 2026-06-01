@@ -45,6 +45,30 @@ await engine.dispose();
 `Hit.id` is the same stable identifier passed to `index`. Re-fetch the full
 record from your source-of-truth store.
 
+## Install
+
+The plugin is **not** published to pub.dev — it lives in-tree under `flutter/`
+and is consumed as a Git dependency. It also requires the native artifacts
+(XCFramework + `.so`) to be built first, so it is intended for teams already
+using Flutter:
+
+```yaml
+# pubspec.yaml
+dependencies:
+  unfydqry:
+    git:
+      url: https://github.com/0x0c/unfydqry.git
+      path: flutter
+```
+
+```sh
+flutter pub get
+```
+
+> The plugin pulls the prebuilt native binaries from the repo's `ios/` and
+> `android/jniLibs/` trees, so build them once before `flutter run` — see
+> [Building native artifacts](#building-native-artifacts).
+
 ## Method channel
 
 Channel name: **`unfydqry/search`**
