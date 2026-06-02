@@ -125,12 +125,7 @@ pub fn word_fuzzy_search(
             });
         }
     }
-    hits.sort_by(|a, b| {
-        a.score
-            .partial_cmp(&b.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.id.cmp(&b.id))
-    });
+    hits.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.id.cmp(&b.id)));
     hits.truncate(limit as usize);
     Ok(hits)
 }
