@@ -1246,4 +1246,176 @@ mod tests {
         let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
         assert_eq!(hits.len(), 1);
     }
+
+    /// In-memory engine with an explicit `field_bits` (loose + trigram/bm25).
+    fn engine_fb(field_bits: u8) -> Arc<SearchEngine> {
+        SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(field_bits),
+            },
+        )
+        .expect("open")
+    }
+
+    #[test]
+    fn index_record_rejects_negative_record_id() {
+        let e = fresh();
+        assert!(matches!(
+            e.index_record(-1, vec![fv(0, "x")]),
+            Err(SearchError::Db(_))
+        ));
+    }
+
+    #[test]
+    fn index_record_accepts_max_record_id_and_rejects_above() {
+        let e = fresh(); // field_bits 8
+        let max = i64::MAX >> 8;
+        e.index_record(max, vec![fv(0, "とうきょう")]).unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, max);
+        // One above the max no longer fits the record-id space.
+        assert!(matches!(
+            e.index_record(max + 1, vec![fv(0, "x")]),
+            Err(SearchError::Db(_))
+        ));
+    }
+
+    #[test]
+    fn remove_record_only_affects_target_record() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        e.index_record(2, vec![fv(0, "とうきょう")]).unwrap();
+        e.remove_record(1).unwrap();
+        // Record 2 (adjacent in the packed-id space) is untouched.
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 2);
+    }
+
+    #[test]
+    fn remove_record_missing_is_noop() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        e.remove_record(999).unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 1);
+    }
+
+    #[test]
+    fn search_records_empty_query_returns_empty() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        assert!(e.search_records("   ".into(), 10, 1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_records_respects_limit() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょうタワー")]).unwrap();
+        e.index_record(2, vec![fv(0, "とうきょうスカイツリー")])
+            .unwrap();
+        e.index_record(3, vec![fv(0, "とうきょうえき")]).unwrap();
+        let hits = e.search_records("とうきょう".into(), 2, 1).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn search_records_matched_slots_lists_all_matching_fields() {
+        let e = fresh();
+        // The query hits both fields of the same record.
+        e.index_record(1, vec![fv(0, "とうきょう"), fv(1, "とうきょうタワー")])
+            .unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        let mut slots = hits[0].matched_slots.clone();
+        slots.sort_unstable();
+        assert_eq!(slots, vec![0, 1]);
+    }
+
+    #[test]
+    fn change_field_bits_same_value_is_noop() {
+        let e = engine_fb(8);
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        assert_eq!(e.change_field_bits(8).unwrap(), 0);
+        assert_eq!(e.field_bits(), 8);
+    }
+
+    #[test]
+    fn change_field_bits_shrink_that_fits_succeeds() {
+        let e = engine_fb(12);
+        e.index_record(3, vec![fv(0, "とうきょう"), fv(1, "おおさか")])
+            .unwrap();
+        // Slots 0,1 and record id 3 all fit in 4 bits.
+        let n = e.change_field_bits(4).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(e.field_bits(), 4);
+        let hits = e.search_records("おおさか".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 3);
+        assert_eq!(hits[0].matched_slots, vec![1]);
+    }
+
+    #[test]
+    fn change_field_bits_rejects_non_packed_negative_id() {
+        let e = fresh(); // field_bits 8
+        // A plain `index` call may use an arbitrary (here negative) id that the
+        // record-layer packing never produces.
+        e.index(-5, "とうきょう".into()).unwrap();
+        assert!(matches!(e.change_field_bits(10), Err(SearchError::Db(_))));
+        // Untouched: the plain-search path still finds it.
+        assert_eq!(e.search("とうきょう".into(), 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn empty_index_adopts_any_field_bits_on_reopen() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("unfydqry_fb_empty_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_string_lossy().to_string();
+
+        // Open empty at 8, write nothing, close.
+        {
+            let _e = SearchEngine::with_config(
+                p.clone(),
+                EngineConfig {
+                    normalize: NormalizeProfile::Loose,
+                    strategy: SearchStrategy::TrigramBm25,
+                    field_bits: Some(8),
+                },
+            )
+            .expect("open 8");
+        }
+        // Still empty → a different explicit value is adopted, not rejected.
+        let e = SearchEngine::with_config(
+            p.clone(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(10),
+            },
+        )
+        .expect("adopt 10 on empty");
+        assert_eq!(e.field_bits(), 10);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn with_options_carries_field_bits() {
+        let e = SearchEngine::with_options(
+            ":memory:".to_string(),
+            EngineOptionsConfig {
+                normalize: NormalizeProfile::Loose.options(),
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(6),
+            },
+        )
+        .expect("open");
+        assert_eq!(e.field_bits(), 6);
+    }
 }
