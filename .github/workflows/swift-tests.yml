@@ -1,28 +1,39 @@
 name: Swift Tests
 
 on:
+  # Always trigger so the test check reports on every push/PR (required-check
+  # friendly). Path relevance is decided per-job below: when nothing relevant
+  # changed, the test job is skipped, which counts as a passing required check.
   push:
     branches: [main]
-    paths:
-      - "core/**"
-      - "ios/Sources/**"
-      - "ios/Tests/**"
-      - "Package.swift"
-      - "spec/**"
-      - ".github/workflows/swift-tests.yml"
   pull_request:
-    paths:
-      - "core/**"
-      - "ios/Sources/**"
-      - "ios/Tests/**"
-      - "Package.swift"
-      - "spec/**"
-      - ".github/workflows/swift-tests.yml"
   workflow_dispatch:
 
 jobs:
+  changes:
+    name: detect relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            run:
+              - "core/**"
+              - "ios/Sources/**"
+              - "ios/Tests/**"
+              - "Package.swift"
+              - "spec/**"
+              - ".github/workflows/swift-tests.yml"
+
   swift-test:
     name: swift test on macOS arm64
+    needs: changes
+    # workflow_dispatch has no diff to filter on, so always run when dispatched.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.run == 'true' }}
     # macos-26 ships an Xcode whose Swift toolchain satisfies Package.swift's
     # swift-tools-version:6.0 (the older macos-14 default is Swift 5.10, which
     # fails to parse the manifest). Matches release-xcframework.yml's runner.
