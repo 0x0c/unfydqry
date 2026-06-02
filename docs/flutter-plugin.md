@@ -9,7 +9,7 @@
 
 ```
 flutter/
-├── lib/unfydqry.dart           public Dart API (SearchEngine, Hit, SearchException)
+├── lib/unfydqry.dart           public Dart API (SearchEngine, Hit, RecordHit, FieldValue, SearchException)
 ├── ios/
 │   └── Classes/UnfydqryPlugin.swift   Swift plugin → UnifiedQuery.SearchEngine
 ├── android/
@@ -45,6 +45,34 @@ await engine.dispose();
 `Hit.id` is the same stable identifier passed to `index`. Re-fetch the full
 record from your source-of-truth store.
 
+### Multi-field records (record-layer API)
+
+Index a record's fields separately and search across all of them, getting back
+one `RecordHit` per record plus which field matched. The concept (packing,
+`field_bits`) is in
+[Multi-field records](../README.md#multi-field-records-record-layer-api).
+
+```dart
+// Index a record built from several fields; each field gets a stable slot.
+await engine.indexRecord(1, [
+  FieldValue(slot: 0, text: '東京タワー'),       // name
+  FieldValue(slot: 1, text: 'とうきょうたわー'),   // reading
+]);
+
+// One RecordHit per record, ranked by the best matching field.
+final records = await engine.searchRecords('とうきょう', fieldsPerRecord: 2);
+// → [RecordHit(recordId: 1, score: …, matchedSlots: [1])]
+
+await engine.removeRecord(1);
+
+// Re-pack the whole index to a new field_bits; returns the count repacked.
+final repacked = await engine.changeFieldBits(10);
+```
+
+`SearchEngine.open` uses the default engine (field_bits adopted from the index,
+or 8 for a fresh one). `RecordHit` carries `recordId`, `score`, and
+`matchedSlots`.
+
 ## Install
 
 The plugin is **not** published to pub.dev — it lives in-tree under `flutter/`
@@ -79,6 +107,10 @@ Channel name: **`unfydqry/search`**
 | `index` | `handle: int, id: int, text: String` | — |
 | `remove` | `handle: int, id: int` | — |
 | `search` | `handle: int, query: String, limit: int` | `List<Map<String, dynamic>>` |
+| `indexRecord` | `handle: int, recordId: int, fields: List<Map>` (each `{slot: int, text: String}`) | — |
+| `removeRecord` | `handle: int, recordId: int` | — |
+| `searchRecords` | `handle: int, query: String, limit: int, fieldsPerRecord: int` | `List<Map<String, dynamic>>` (each `{recordId, score, matchedSlots}`) |
+| `changeFieldBits` | `handle: int, newFieldBits: int` | `int` (records repacked) |
 | `dispose` | `handle: int` | — |
 
 Engines are identified by an integer handle so multiple instances can coexist.

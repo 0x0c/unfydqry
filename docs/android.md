@@ -58,6 +58,46 @@ val hits = engine.search("python", 50u)
 // → [Hit(id=1, score=-1.521)]
 ```
 
+## Record-layer search (multi-field)
+
+To index several fields per record and search across all of them, use the
+record-layer API. The concept (packing, `field_bits`, `RecordHit`) is in
+[Multi-field records](../README.md#multi-field-records-record-layer-api).
+
+```kotlin
+import uniffi.unfydqry.FieldValue
+import uniffi.unfydqry.SearchEngine
+
+val engine = SearchEngine(dbPath)
+
+// Index a record built from several fields; each field gets a stable slot.
+engine.indexRecord(
+    recordId = 1L,
+    fields = listOf(
+        FieldValue(slot = 0.toUByte(), text = "東京タワー"),       // name
+        FieldValue(slot = 1.toUByte(), text = "とうきょうたわー"),   // reading
+    ),
+)
+
+// One RecordHit per record, ranked by the best matching field.
+val hits = engine.searchRecords("とうきょう", limit = 50u, fieldsPerRecord = 2u)
+// → [RecordHit(recordId=1, score=…, matchedSlots=[1])]  // matched the reading
+
+engine.removeRecord(1L)
+```
+
+`field_bits` is chosen at open time (default 8); omit it to adopt the index's
+stored value, or pass it to enforce one. To change it later, `changeFieldBits`
+re-packs the index in place:
+
+```kotlin
+val engine = SearchEngine.withConfig(
+    dbPath,
+    EngineConfig(NormalizeProfile.LOOSE, SearchStrategy.TRIGRAM_BM25, fieldBits = 8.toUByte()),
+)
+val repacked = engine.changeFieldBits(newFieldBits = 10.toUByte())  // returns the count repacked
+```
+
 ## Selecting a combination
 
 The normalization profile and search strategy are chosen on the binding side —

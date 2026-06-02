@@ -20,6 +20,7 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 - **Dakuten / handakuten are kept distinct** (`か` and `が` are different keys).
 - **Default search** is a SQLite FTS5 + trigram index ranked by `bm25`; substring, prefix, suffix, all-terms, and fuzzy (trigram / Levenshtein / Damerau-Levenshtein) algorithms are also selectable.
 - Searches return only the stable `id` and a score; the host re-fetches records from its source-of-truth store.
+- **Multi-field records**: index a record's fields separately and query across all of them in one call, learning *which* field matched — see [Multi-field records](#multi-field-records-record-layer-api).
 - Because the logic lives in **one Rust implementation**, iOS and Android behaviour matches by construction, not by convention.
 
 ## Architecture
@@ -73,7 +74,7 @@ unfydqry/
 │   ├── Cargo.toml
 │   ├── src/lib.rs               FFI surface (constructors, normalize* exports)
 │   ├── src/config.rs           NormalizeProfile / NormalizeOptions / SearchStrategy / EngineConfig / EngineOptionsConfig
-│   ├── src/engine.rs           SearchEngine (index/search/remove/reindex, raw-text retention, normalize fingerprint)
+│   ├── src/engine.rs           SearchEngine (index/search/remove/reindex + record-layer index_record/search_records/remove_record/change_field_bits, raw-text retention, normalize + field_bits stamps)
 │   ├── src/normalize/          composable normalization steps (steps.rs) + presets
 │   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix/suffix/all_terms/fuzzy_trigram/levenshtein/damerau_levenshtein)
 │   ├── src/bin/uniffi-bindgen.rs
@@ -94,7 +95,7 @@ unfydqry/
 │       ├── app/                 Compose sample app
 │       └── unifiedquery/        JVM Kotlin library + JUnit 5 — 4 classes
 ├── flutter/                     Flutter plugin (Dart package: unfydqry)
-│   ├── lib/unfydqry.dart        public Dart API (SearchEngine, Hit, SearchException)
+│   ├── lib/unfydqry.dart        public Dart API (SearchEngine, Hit, RecordHit, FieldValue, SearchException)
 │   ├── ios/                     Swift plugin → UnifiedQuery.SearchEngine
 │   ├── android/                 Kotlin plugin → uniffi.unfydqry.SearchEngine
 │   ├── test/                    mock-channel Dart unit tests
@@ -204,6 +205,34 @@ The combination is chosen on the binding side — see the per-language calls in 
 
 To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile), `normalizeWithProfile(input, profile)`, and `normalizeWithOptions(input, options)` for a composable step set.
 
+## Multi-field records (record-layer API)
+
+`index` / `search` treat each `id` as a single text blob. When a record has several searchable fields — a contact's name, reading, and note, say — the **record-layer API** indexes each field separately while still returning one result per record, so a query can match *any* field and you learn *which* field matched.
+
+It is a thin layer over the same index: the engine packs `(record_id, slot)` into the stable id it stores under, and collapses field hits back to records at search time. The packed id never leaves the engine — hosts only pass a `record_id` (their own `i64`) and a per-field `slot` (a small, stable `u8`), and get back `RecordHit { record_id, score, matched_slots }`.
+
+| Call | What it does |
+|---|---|
+| `indexRecord(recordId, [FieldValue(slot, text), …])` | Upsert a whole record. Fields that are empty once normalized are dropped; re-indexing the same `recordId` fully replaces it. Duplicate slots in one call are rejected. |
+| `searchRecords(query, limit, fieldsPerRecord)` | Search across fields; returns at most `limit` `RecordHit`s ranked by each record's best (smallest-score) matching field. `fieldsPerRecord` is the host's field count, used only as an over-fetch hint. |
+| `removeRecord(recordId)` | Remove every field of a record. |
+| `changeFieldBits(newFieldBits)` | Re-pack the whole index to a new `field_bits` (see below). |
+
+`index` / `remove` / `search` / `Hit` are unchanged and can still be used directly; the record layer is purely additive.
+
+### `field_bits`
+
+The packed id splits into a `record_id` (high bits) and a `slot` (the low `field_bits` bits). `field_bits` defaults to **8** — up to 256 fields per record, leaving ~3.6×10¹⁶ record ids — and is chosen per index via `EngineConfig.field_bits` / `EngineOptionsConfig.field_bits` (`Option<u8>`, valid range `1..=62`):
+
+- **Omit it** (`None`, the default): adopt whatever value the index was created with (or `8` for a fresh index). This never errors on field-bits, so opening an index without caring about its packing keeps working — including the plain `index` / `search` callers.
+- **Set it** (`Some(n)`): require `n`; opening an index stamped with a *different* value throws `FieldBitsMismatch`.
+
+`field_bits` is stamped into the index (like the normalization fingerprint) and is fixed at creation, because it determines the id encoding. To change it, call `changeFieldBits(n)`: it re-packs every stored id in place, all-or-nothing — if any stored slot or record id would not fit under `n`, nothing changes and it returns an error.
+
+> Choosing `field_bits`: pick the smallest count that comfortably holds your fields. The real limits are not the id space (astronomically large) but storage/latency and `record_id` shape — random / UUID-derived ids rarely fit the non-negative `0..=2^(63−field_bits)−1` range, so prefer sequential ids.
+
+Per-language calls are in the [iOS](docs/ios.md#record-layer-search-multi-field), [Android](docs/android.md#record-layer-search-multi-field), and [Flutter](docs/flutter-plugin.md#dart-api) guides.
+
 ## Build
 
 ### Prerequisites
@@ -257,14 +286,16 @@ Both sample apps (`ios/sample`, `android/sample/app`) demo the same UX so the
 two platforms can be eyeballed side by side:
 
 - A standard search field with **incremental search** (debounced ~150 ms); an
-  empty query lists every seeded document.
+  empty query lists every seeded record.
+- **Multi-field records** indexed with `indexRecord` (a name + reading per
+  record) and queried with `searchRecords`; each result row shows which field
+  matched, demonstrating the record-layer API.
 - A **settings modal** (SwiftUI `.sheet` / Compose `ModalBottomSheet`) with a
   toggle per `NormalizeOptions` step, the search-algorithm picker, and an
   **index-regeneration** button. Flipping a step regenerates the index in place
-  via `withOptionsRebuilding`, so results update without re-feeding documents.
-- The same seed corpus on both platforms, chosen to exercise each step (kana /
-  width / case folding, diacritics, chōonpu, iteration marks, hyphens, digit
-  grouping) so the effect of toggling a step is visible.
+  via `withOptionsRebuilding`, so results update without re-feeding records.
+- The same seed (8 records) on both platforms so hits can be compared by id
+  side by side.
 
 ## Tests
 

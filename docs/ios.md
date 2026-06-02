@@ -49,6 +49,40 @@ let hits = try engine.search(query: "python", limit: 50)
 // → [Hit(id: 1, score: -1.521)]
 ```
 
+## Record-layer search (multi-field)
+
+To index several fields per record and search across all of them, use the
+record-layer API. The concept (packing, `field_bits`, `RecordHit`) is in
+[Multi-field records](../README.md#multi-field-records-record-layer-api).
+
+```swift
+let engine = try SearchEngine(dbPath: dbURL.path)
+
+// Index a record built from several fields; each field gets a stable slot.
+try engine.indexRecord(recordId: 1, fields: [
+    FieldValue(slot: 0, text: "東京タワー"),        // name
+    FieldValue(slot: 1, text: "とうきょうたわー"),   // reading
+])
+
+// One RecordHit per record, ranked by the best matching field.
+let hits = try engine.searchRecords(query: "とうきょう", limit: 50, fieldsPerRecord: 2)
+// → [RecordHit(recordId: 1, score: …, matchedSlots: [1])]  // matched the reading
+
+try engine.removeRecord(recordId: 1)
+```
+
+`field_bits` is chosen at open time (default 8); omit it to adopt the index's
+stored value, or pass it to enforce one. To change it later, `changeFieldBits`
+re-packs the index in place:
+
+```swift
+let engine = try SearchEngine.withConfig(
+    dbPath: dbURL.path,
+    config: EngineConfig(normalize: .loose, strategy: .trigramBm25, fieldBits: 8)
+)
+let repacked = try engine.changeFieldBits(newFieldBits: 10)  // returns the count repacked
+```
+
 ## Selecting a combination
 
 The normalization profile and search strategy are chosen on the binding side —
