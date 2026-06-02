@@ -1019,9 +1019,10 @@ public struct EngineConfig: Equatable, Hashable {
      * `None` adopts the value the index was created with (or
      * [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
      * field-bits — this keeps the "open without specifying field_bits"
-     * interface working. `Some(n)` requires `n` and rejects an index stamped
-     * with a different value (`SearchError::FieldBitsMismatch`). Irrelevant to
-     * the plain `index` / `search` API.
+     * interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+     * rejects an index stamped with a different value
+     * (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+     * `index` / `search` API.
      */
     public var fieldBits: UInt8?
 
@@ -1041,9 +1042,10 @@ public struct EngineConfig: Equatable, Hashable {
          * `None` adopts the value the index was created with (or
          * [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
          * field-bits — this keeps the "open without specifying field_bits"
-         * interface working. `Some(n)` requires `n` and rejects an index stamped
-         * with a different value (`SearchError::FieldBitsMismatch`). Irrelevant to
-         * the plain `index` / `search` API.
+         * interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+         * rejects an index stamped with a different value
+         * (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+         * `index` / `search` API.
          */fieldBits: UInt8? = nil) {
         self.normalize = normalize
         self.strategy = strategy

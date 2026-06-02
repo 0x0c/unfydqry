@@ -156,9 +156,10 @@ pub struct EngineConfig {
     /// `None` adopts the value the index was created with (or
     /// [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
     /// field-bits — this keeps the "open without specifying field_bits"
-    /// interface working. `Some(n)` requires `n` and rejects an index stamped
-    /// with a different value (`SearchError::FieldBitsMismatch`). Irrelevant to
-    /// the plain `index` / `search` API.
+    /// interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+    /// rejects an index stamped with a different value
+    /// (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+    /// `index` / `search` API.
     #[uniffi(default = None)]
     pub field_bits: Option<u8>,
 }

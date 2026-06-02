@@ -10,6 +10,11 @@ use crate::config::{
 use crate::normalize::{Normalizer, build_normalizer_options};
 use crate::search::{SearchAlgorithm, build_strategy};
 
+/// Upper bound for `field_bits`: a packed id needs at least one bit for the
+/// record id and must stay non-negative (the sign bit is reserved), so at most
+/// 62 of the 63 non-sign bits can go to the field slot.
+const MAX_FIELD_BITS: u8 = 62;
+
 /// A single search result: the stable `id` the host indexed under, plus a
 /// relevance `score`.
 ///
@@ -273,6 +278,38 @@ impl SearchEngine {
         (doc_id & ((1i64 << self.field_bits()) - 1)) as u8
     }
 
+    /// The inclusive packed-id range `[lo, hi]` owned by `record_id` under the
+    /// active field-bits. `lo` is also the packed id of the record's slot 0.
+    fn record_id_range(&self, record_id: i64) -> (i64, i64) {
+        let lo = record_id << self.field_bits();
+        (lo, lo | ((1i64 << self.field_bits()) - 1))
+    }
+
+    /// Deletes every row whose packed id falls in `[lo, hi]` from both tables.
+    /// Accepts a `Connection` or a `Transaction` (which derefs to one).
+    fn clear_id_range(conn: &Connection, lo: i64, hi: i64) -> Result<(), SearchError> {
+        conn.execute(
+            "DELETE FROM docs WHERE rowid BETWEEN ?1 AND ?2",
+            params![lo, hi],
+        )?;
+        conn.execute(
+            "DELETE FROM entries WHERE id BETWEEN ?1 AND ?2",
+            params![lo, hi],
+        )?;
+        Ok(())
+    }
+
+    /// Validates that `bits` leaves at least one record bit and keeps packed ids
+    /// non-negative (`1..=MAX_FIELD_BITS`).
+    fn check_field_bits(bits: u8) -> Result<(), SearchError> {
+        if !(1..=MAX_FIELD_BITS).contains(&bits) {
+            return Err(SearchError::Db(format!(
+                "field_bits must be in 1..={MAX_FIELD_BITS}, got {bits}"
+            )));
+        }
+        Ok(())
+    }
+
     fn assemble(
         conn: Connection,
         options: NormalizeOptions,
@@ -310,11 +347,7 @@ impl SearchEngine {
         let stored_bits = Self::stored_field_bits(&conn)?;
         let effective_bits = match field_bits {
             Some(n) => {
-                if !(1..=62).contains(&n) {
-                    return Err(SearchError::Db(format!(
-                        "field_bits must be in 1..=62, got {n}"
-                    )));
-                }
+                Self::check_field_bits(n)?;
                 if let Some(s) = stored_bits
                     && s != n
                 {
@@ -535,7 +568,11 @@ impl SearchEngine {
                 "record_id {record_id} out of range for field_bits {bits}"
             )));
         }
+        // Validate slots up front: each must fit, and slots must be unique within
+        // the call (two fields with the same slot pack to the same id, which the
+        // docs insert below would otherwise reject with an opaque constraint error).
         let slot_cap = 1i64 << bits;
+        let mut seen_slots: Vec<u8> = Vec::with_capacity(fields.len());
         for f in &fields {
             if i64::from(f.slot) >= slot_cap {
                 return Err(SearchError::Db(format!(
@@ -543,23 +580,22 @@ impl SearchEngine {
                     f.slot
                 )));
             }
+            if seen_slots.contains(&f.slot) {
+                return Err(SearchError::Db(format!(
+                    "duplicate slot {} in index_record fields",
+                    f.slot
+                )));
+            }
+            seen_slots.push(f.slot);
         }
 
-        let lo = record_id << bits;
-        let hi = lo | (slot_cap - 1);
+        let (lo, hi) = self.record_id_range(record_id);
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         // Replace the record: clear its whole packed-id range, then insert the
         // non-empty fields. The range delete is slot-agnostic, so stale slots
         // left by a previous, wider field set are removed too.
-        tx.execute(
-            "DELETE FROM docs WHERE rowid BETWEEN ?1 AND ?2",
-            params![lo, hi],
-        )?;
-        tx.execute(
-            "DELETE FROM entries WHERE id BETWEEN ?1 AND ?2",
-            params![lo, hi],
-        )?;
+        Self::clear_id_range(&tx, lo, hi)?;
         for f in &fields {
             let norm = self.normalizer.normalize(&f.text);
             if norm.is_empty() {
@@ -587,17 +623,9 @@ impl SearchEngine {
                 "record_id {record_id} out of range for field_bits {bits}"
             )));
         }
-        let lo = record_id << bits;
-        let hi = lo | ((1i64 << bits) - 1);
+        let (lo, hi) = self.record_id_range(record_id);
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM docs WHERE rowid BETWEEN ?1 AND ?2",
-            params![lo, hi],
-        )?;
-        conn.execute(
-            "DELETE FROM entries WHERE id BETWEEN ?1 AND ?2",
-            params![lo, hi],
-        )?;
+        Self::clear_id_range(&conn, lo, hi)?;
         drop(conn);
         Ok(())
     }
@@ -669,11 +697,7 @@ impl SearchEngine {
     /// record-layer API), the index is left untouched and an error is returned.
     #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
     pub fn change_field_bits(&self, new_field_bits: u8) -> Result<u64, SearchError> {
-        if !(1..=62).contains(&new_field_bits) {
-            return Err(SearchError::Db(format!(
-                "field_bits must be in 1..=62, got {new_field_bits}"
-            )));
-        }
+        Self::check_field_bits(new_field_bits)?;
         let conn = self.conn.lock().unwrap();
         let old = self.field_bits();
         if new_field_bits == old {
@@ -1282,6 +1306,13 @@ mod tests {
             e.index_record(max + 1, vec![fv(0, "x")]),
             Err(SearchError::Db(_))
         ));
+    }
+
+    #[test]
+    fn index_record_rejects_duplicate_slots() {
+        let e = fresh();
+        let err = e.index_record(1, vec![fv(0, "とうきょう"), fv(0, "おおさか")]);
+        assert!(matches!(err, Err(SearchError::Db(_))), "duplicate slot 0");
     }
 
     #[test]
