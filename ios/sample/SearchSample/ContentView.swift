@@ -2,11 +2,33 @@ import Combine
 import UnifiedQuery
 import SwiftUI
 
-/// Minimal record that stands in for the app's "source-of-truth DB".
-/// In a real app this would be a SwiftData / Core Data entity.
+/// Minimal multi-field record that stands in for the app's "source-of-truth DB".
+/// In a real app this would be a SwiftData / Core Data entity with several
+/// searchable columns.
 struct Record: Identifiable, Hashable {
     let id: Int64
-    let text: String
+    let name: String
+    let yomi: String
+}
+
+/// Field slots for the record-layer API. Stable, never renumbered.
+let slotName: UInt8 = 0
+let slotYomi: UInt8 = 1
+let fieldCount: UInt32 = 2
+
+func slotLabel(_ slot: UInt8) -> String {
+    switch slot {
+    case slotName: return "名前"
+    case slotYomi: return "よみ"
+    default: return "slot \(slot)"
+    }
+}
+
+/// A search result row: the matched record plus which of its fields matched.
+struct ResultRow: Identifiable, Hashable {
+    let record: Record
+    let matchedSlots: [UInt8]
+    var id: Int64 { record.id }
 }
 
 /// UI-facing list of search algorithms, mapped to the FFI enum.
@@ -87,7 +109,7 @@ final class SearchModel: ObservableObject {
     /// incremental, debounced search.
     @Published var query: String = ""
     @Published var status: String = ""
-    @Published var results: [Record] = []
+    @Published var results: [ResultRow] = []
 
     /// The *pending* normalization the toggles reflect. Changing it does NOT
     /// rebuild the index — instead we detect whether a regeneration is needed
@@ -171,35 +193,28 @@ final class SearchModel: ObservableObject {
     }
 
     private func seed() {
+        // Multi-field records (name + reading). The same seed is used across the
+        // iOS, Android, and Flutter samples so hits can be compared by id.
         let seed: [Record] = [
-            Record(id: 1, text: "東京タワー"),
-            Record(id: 2, text: "とうきょうスカイツリー"),
-            Record(id: 3, text: "ﾄｳｷｮｳ ﾄﾞｰﾑ"),
-            Record(id: 4, text: "Osaka 城"),
-            Record(id: 5, text: "がっこう ぐらし"),
-            Record(id: 6, text: "かっこう の歌"),
-            Record(id: 7, text: "Ｐｙｔｈｏｎ 入門"),
-            Record(id: 8, text: "ぱんだ と ﾊﾟﾝﾀﾞ"),
-            Record(id: 9, text: "コーヒーサーバー"),
-            Record(id: 10, text: "café オレ"),
-            Record(id: 11, text: "プリンター ドライバー"),
-            Record(id: 12, text: "データベース サーバー"),
-            Record(id: 13, text: "ﾊﾝﾊﾞｰｶﾞｰ ショップ"),
-            Record(id: 14, text: "résumé を書く"),
-            Record(id: 15, text: "Pokémon GO"),
-            Record(id: 16, text: "時々 雨のち晴れ"),
-            Record(id: 17, text: "人々 の声"),
-            Record(id: 18, text: "いすゞ 自動車"),
-            Record(id: 19, text: "こゝろ 夏目漱石"),
-            Record(id: 20, text: "東京–大阪 新幹線"),
-            Record(id: 21, text: "予算 1,000,000 円"),
-            Record(id: 22, text: "在庫 1,234 個")
+            Record(id: 1, name: "東京タワー", yomi: "とうきょうたわー"),
+            Record(id: 2, name: "スカイツリー", yomi: "すかいつりー"),
+            Record(id: 3, name: "大阪城", yomi: "おおさかじょう"),
+            Record(id: 4, name: "名古屋テレビ塔", yomi: "なごやてれびとう"),
+            Record(id: 5, name: "札幌時計台", yomi: "さっぽろとけいだい"),
+            Record(id: 6, name: "コーヒーサーバー", yomi: "こーひーさーばー"),
+            Record(id: 7, name: "データベース", yomi: "でーたべーす"),
+            Record(id: 8, name: "プリンター", yomi: "ぷりんたー")
         ]
         for record in seed {
-            try? engine.index(id: record.id, text: record.text)
+            // The engine packs (id, slot) internally; we pass our record id and
+            // a slot per field, and get record ids back from searchRecords.
+            try? engine.indexRecord(recordId: record.id, fields: [
+                FieldValue(slot: slotName, text: record.name),
+                FieldValue(slot: slotYomi, text: record.yomi)
+            ])
             store[record.id] = record
         }
-        status = "indexed \(seed.count) docs"
+        status = "indexed \(seed.count) records"
     }
 
     /// Applies the pending `options` by regenerating the index in place from the
@@ -221,14 +236,20 @@ final class SearchModel: ObservableObject {
 
     func search() {
         guard !query.isEmpty else {
-            // Empty query → show every indexed document (sorted by id for stability).
-            results = store.values.sorted { $0.id < $1.id }
+            // Empty query → show every indexed record (sorted by id for stability).
+            results = store.values
+                .sorted { $0.id < $1.id }
+                .map { ResultRow(record: $0, matchedSlots: []) }
             status = "全件表示 (\(results.count))"
             return
         }
         do {
-            let hits = try engine.search(query: query, limit: 50)
-            results = hits.compactMap { store[$0.id] }
+            let hits = try engine.searchRecords(
+                query: query, limit: 50, fieldsPerRecord: fieldCount
+            )
+            results = hits.compactMap { hit in
+                store[hit.recordId].map { ResultRow(record: $0, matchedSlots: hit.matchedSlots) }
+            }
             // Results reflect the *applied* normalization until a reindex.
             let normalized = normalizeWithOptions(input: query, options: applied)
             status = "hits: \(results.count)  normalized=\u{0022}\(normalized)\u{0022}"
@@ -284,13 +305,21 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            List(model.results) { record in
+            List(model.results) { row in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(record.text).font(.body)
-                    Text("id=\(record.id)")
+                    Text(row.record.name).font(.body)
+                    Text("よみ: \(row.record.yomi)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                    HStack(spacing: 8) {
+                        Text("id=\(row.record.id)")
+                            .monospacedDigit()
+                        if !row.matchedSlots.isEmpty {
+                            Text("一致: \(row.matchedSlots.map(slotLabel).joined(separator: ", "))")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("SearchSample")

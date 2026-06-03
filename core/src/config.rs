@@ -138,6 +138,11 @@ pub enum SearchStrategy {
     DamerauLevenshtein,
 }
 
+/// Default number of low bits of a packed id reserved for the field slot in the
+/// record-layer API (`index_record` / `search_records`). 8 bits → up to 256
+/// fields per record, leaving 55 bits of non-negative record-id space.
+pub const DEFAULT_FIELD_BITS: u8 = 8;
+
 /// The combination the host selects when constructing an engine.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EngineConfig {
@@ -145,6 +150,18 @@ pub struct EngineConfig {
     pub normalize: NormalizeProfile,
     /// Which query algorithm `SearchEngine.search` uses.
     pub strategy: SearchStrategy,
+    /// Low bits of each packed id reserved for the field slot in the
+    /// record-layer API (`index_record` / `search_records`).
+    ///
+    /// `None` adopts the value the index was created with (or
+    /// [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
+    /// field-bits — this keeps the "open without specifying field_bits"
+    /// interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+    /// rejects an index stamped with a different value
+    /// (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+    /// `index` / `search` API.
+    #[uniffi(default = None)]
+    pub field_bits: Option<u8>,
 }
 
 impl Default for EngineConfig {
@@ -153,6 +170,7 @@ impl Default for EngineConfig {
         Self {
             normalize: NormalizeProfile::Loose,
             strategy: SearchStrategy::TrigramBm25,
+            field_bits: None,
         }
     }
 }
@@ -166,4 +184,7 @@ pub struct EngineOptionsConfig {
     pub normalize: NormalizeOptions,
     /// Which query algorithm `SearchEngine.search` uses.
     pub strategy: SearchStrategy,
+    /// See [`EngineConfig::field_bits`]. `None` adopts the stored value.
+    #[uniffi(default = None)]
+    pub field_bits: Option<u8>,
 }

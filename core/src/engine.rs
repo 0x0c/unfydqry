@@ -1,10 +1,19 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::config::{EngineConfig, EngineOptionsConfig, NormalizeOptions, SearchStrategy};
+use crate::config::{
+    DEFAULT_FIELD_BITS, EngineConfig, EngineOptionsConfig, NormalizeOptions, SearchStrategy,
+};
 use crate::normalize::{Normalizer, build_normalizer_options};
 use crate::search::{SearchAlgorithm, build_strategy};
+
+/// Upper bound for `field_bits`: a packed id needs at least one bit for the
+/// record id and must stay non-negative (the sign bit is reserved), so at most
+/// 62 of the 63 non-sign bits can go to the field slot.
+const MAX_FIELD_BITS: u8 = 62;
 
 /// A single search result: the stable `id` the host indexed under, plus a
 /// relevance `score`.
@@ -22,6 +31,37 @@ pub struct Hit {
     pub score: f64,
 }
 
+/// A single field of a host record, for the record-layer indexing API
+/// (`index_record`).
+///
+/// `slot` is a small, stable per-field number (0-based) chosen by the host. The
+/// engine packs `(record_id, slot)` into the stable id it stores under, so a
+/// slot, once used, must not be renumbered, and must be less than
+/// `2^field_bits`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FieldValue {
+    /// Stable per-field slot. Must be `< 2^field_bits`.
+    pub slot: u8,
+    /// Raw field text; the engine normalizes it the same way as `index`.
+    pub text: String,
+}
+
+/// A record-level search result from `search_records`: the host's `record_id`,
+/// the best (smallest) score across its matching fields, and which field slots
+/// matched.
+///
+/// As with `Hit`, the engine returns only ids and scores; the host re-fetches
+/// the full record from its own store.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RecordHit {
+    /// The host record id the matching fields belong to.
+    pub record_id: i64,
+    /// Best (smallest) score among the record's matching fields. See `Hit.score`.
+    pub score: f64,
+    /// Slots of the fields that matched, ordered best (smallest score) first.
+    pub matched_slots: Vec<u8>,
+}
+
 /// An error surfaced across the FFI boundary by `SearchEngine`.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SearchError {
@@ -35,6 +75,13 @@ pub enum SearchError {
     /// the index; `requested` is the one just asked for.
     #[error("index built with normalize profile {stored}, requested {requested}; rebuild required")]
     ConfigMismatch { stored: String, requested: String },
+    /// The index was created with a different `field_bits` than requested. The
+    /// id packing is encoding-specific and fixed at creation, so this is not
+    /// auto-rebuilt: open with `field_bits: None` to adopt the stored value, or
+    /// call `change_field_bits` to re-pack the index. `stored` is the value
+    /// recorded in the index; `requested` is the one just asked for.
+    #[error("index built with field_bits {stored}, requested {requested}; rebuild required")]
+    FieldBitsMismatch { stored: u8, requested: u8 },
 }
 
 impl From<rusqlite::Error> for SearchError {
@@ -107,6 +154,10 @@ pub struct SearchEngine {
     normalizer: Box<dyn Normalizer>,
     strategy: Box<dyn SearchAlgorithm>,
     options: NormalizeOptions,
+    /// Low bits of each packed id reserved for the field slot in the
+    /// record-layer API. Resolved at open; mutated only by `change_field_bits`,
+    /// hence the atomic.
+    field_bits: AtomicU8,
 }
 
 impl SearchEngine {
@@ -176,16 +227,101 @@ impl SearchEngine {
         Ok(())
     }
 
+    /// The field-bits value recorded in the index, if any documents exist.
+    ///
+    /// Returns `None` for an empty index (any value is safe to adopt). A
+    /// non-empty index missing the key predates the record-layer API and is
+    /// treated as [`DEFAULT_FIELD_BITS`].
+    fn stored_field_bits(conn: &Connection) -> Result<Option<u8>, SearchError> {
+        let indexed: i64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
+        if indexed == 0 {
+            return Ok(None);
+        }
+        let stored: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'field_bits'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(Some(
+            stored
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(DEFAULT_FIELD_BITS),
+        ))
+    }
+
+    /// Records `bits` as the index's field-bits value.
+    fn stamp_field_bits(conn: &Connection, bits: u8) -> Result<(), SearchError> {
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('field_bits', ?1)",
+            params![bits.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// The active field-bits value.
+    fn field_bits(&self) -> u8 {
+        self.field_bits.load(Ordering::Relaxed)
+    }
+
+    /// Largest non-negative record id representable under the active field-bits.
+    fn max_record_id(&self) -> i64 {
+        i64::MAX >> self.field_bits()
+    }
+
+    /// Decodes the host record id from a packed document id.
+    fn record_of(&self, doc_id: i64) -> i64 {
+        doc_id >> self.field_bits()
+    }
+
+    /// Decodes the field slot from a packed document id.
+    fn slot_of(&self, doc_id: i64) -> u8 {
+        (doc_id & ((1i64 << self.field_bits()) - 1)) as u8
+    }
+
+    /// The inclusive packed-id range `[lo, hi]` owned by `record_id` under the
+    /// active field-bits. `lo` is also the packed id of the record's slot 0.
+    fn record_id_range(&self, record_id: i64) -> (i64, i64) {
+        let lo = record_id << self.field_bits();
+        (lo, lo | ((1i64 << self.field_bits()) - 1))
+    }
+
+    /// Deletes every row whose packed id falls in `[lo, hi]` from both tables.
+    /// Accepts a `Connection` or a `Transaction` (which derefs to one).
+    fn clear_id_range(conn: &Connection, lo: i64, hi: i64) -> Result<(), SearchError> {
+        conn.execute(
+            "DELETE FROM docs WHERE rowid BETWEEN ?1 AND ?2",
+            params![lo, hi],
+        )?;
+        conn.execute(
+            "DELETE FROM entries WHERE id BETWEEN ?1 AND ?2",
+            params![lo, hi],
+        )?;
+        Ok(())
+    }
+
+    /// Validates that `bits` leaves at least one record bit and keeps packed ids
+    /// non-negative (`1..=MAX_FIELD_BITS`).
+    fn check_field_bits(bits: u8) -> Result<(), SearchError> {
+        if !(1..=MAX_FIELD_BITS).contains(&bits) {
+            return Err(SearchError::Db(format!(
+                "field_bits must be in 1..={MAX_FIELD_BITS}, got {bits}"
+            )));
+        }
+        Ok(())
+    }
+
     fn assemble(
         conn: Connection,
         options: NormalizeOptions,
         strategy: SearchStrategy,
+        field_bits: u8,
     ) -> Arc<Self> {
         Arc::new(Self {
             conn: Mutex::new(conn),
             normalizer: build_normalizer_options(options),
             strategy: build_strategy(strategy),
             options,
+            field_bits: AtomicU8::new(field_bits),
         })
     }
 
@@ -199,9 +335,32 @@ impl SearchEngine {
         db_path: &str,
         options: NormalizeOptions,
         strategy: SearchStrategy,
+        field_bits: Option<u8>,
         rebuild: bool,
     ) -> Result<Arc<Self>, SearchError> {
         let conn = Self::open_schema(db_path)?;
+
+        // Resolve field_bits: `Some(n)` is validated and must match any stored
+        // value; `None` adopts the stored value (or the default for a fresh
+        // index) and never errors. Field-bits is an encoding choice fixed at
+        // creation, so a mismatch is rejected regardless of `rebuild`.
+        let stored_bits = Self::stored_field_bits(&conn)?;
+        let effective_bits = match field_bits {
+            Some(n) => {
+                Self::check_field_bits(n)?;
+                if let Some(s) = stored_bits
+                    && s != n
+                {
+                    return Err(SearchError::FieldBitsMismatch {
+                        stored: s,
+                        requested: n,
+                    });
+                }
+                n
+            }
+            None => stored_bits.unwrap_or(DEFAULT_FIELD_BITS),
+        };
+
         let requested = options.fingerprint();
         let stored = Self::stored_profile(&conn)?;
         let mismatch = stored.as_deref().is_some_and(|s| s != requested);
@@ -213,7 +372,11 @@ impl SearchEngine {
             });
         }
 
-        let engine = Self::assemble(conn, options, strategy);
+        let engine = Self::assemble(conn, options, strategy, effective_bits);
+        {
+            let conn = engine.conn.lock().unwrap();
+            Self::stamp_field_bits(&conn, effective_bits)?;
+        }
         if mismatch {
             // `reindex` re-normalizes from raw and stamps the new fingerprint.
             engine.reindex()?;
@@ -244,7 +407,13 @@ impl SearchEngine {
     /// engine opened with the matching profile.
     #[uniffi::constructor(name = "withConfig")]
     pub fn with_config(db_path: String, config: EngineConfig) -> Result<Arc<Self>, SearchError> {
-        Self::open(&db_path, config.normalize.options(), config.strategy, false)
+        Self::open(
+            &db_path,
+            config.normalize.options(),
+            config.strategy,
+            config.field_bits,
+            false,
+        )
     }
 
     /// Opens the index under `config`, regenerating it in place when the stored
@@ -259,7 +428,13 @@ impl SearchEngine {
         db_path: String,
         config: EngineConfig,
     ) -> Result<Arc<Self>, SearchError> {
-        Self::open(&db_path, config.normalize.options(), config.strategy, true)
+        Self::open(
+            &db_path,
+            config.normalize.options(),
+            config.strategy,
+            config.field_bits,
+            true,
+        )
     }
 
     /// Like `withConfig`, but selects normalization with a composable
@@ -271,7 +446,13 @@ impl SearchEngine {
         db_path: String,
         config: EngineOptionsConfig,
     ) -> Result<Arc<Self>, SearchError> {
-        Self::open(&db_path, config.normalize, config.strategy, false)
+        Self::open(
+            &db_path,
+            config.normalize,
+            config.strategy,
+            config.field_bits,
+            false,
+        )
     }
 
     /// Like `withConfigRebuilding`, but selects normalization with a composable
@@ -282,7 +463,13 @@ impl SearchEngine {
         db_path: String,
         config: EngineOptionsConfig,
     ) -> Result<Arc<Self>, SearchError> {
-        Self::open(&db_path, config.normalize, config.strategy, true)
+        Self::open(
+            &db_path,
+            config.normalize,
+            config.strategy,
+            config.field_bits,
+            true,
+        )
     }
 
     /// Adds, or replaces, the document stored under `id`.
@@ -364,6 +551,218 @@ impl SearchEngine {
         let conn = self.conn.lock().unwrap();
         self.strategy.search(&conn, &q, limit)
     }
+
+    /// Adds, or replaces, the whole record `record_id`, made of multiple
+    /// fields.
+    ///
+    /// Each field is stored under a stable id that packs `(record_id, slot)`;
+    /// fields that are empty once normalized are dropped. Re-calling with an
+    /// existing `record_id` fully replaces its previous fields. `record_id`
+    /// must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
+    /// `< 2^field_bits`, otherwise an error is returned and nothing is written.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    pub fn index_record(&self, record_id: i64, fields: Vec<FieldValue>) -> Result<(), SearchError> {
+        let bits = self.field_bits();
+        if !(0..=self.max_record_id()).contains(&record_id) {
+            return Err(SearchError::Db(format!(
+                "record_id {record_id} out of range for field_bits {bits}"
+            )));
+        }
+        // Validate slots up front: each must fit, and slots must be unique within
+        // the call (two fields with the same slot pack to the same id, which the
+        // docs insert below would otherwise reject with an opaque constraint error).
+        let slot_cap = 1i64 << bits;
+        let mut seen_slots: Vec<u8> = Vec::with_capacity(fields.len());
+        for f in &fields {
+            if i64::from(f.slot) >= slot_cap {
+                return Err(SearchError::Db(format!(
+                    "slot {} does not fit in field_bits {bits}",
+                    f.slot
+                )));
+            }
+            if seen_slots.contains(&f.slot) {
+                return Err(SearchError::Db(format!(
+                    "duplicate slot {} in index_record fields",
+                    f.slot
+                )));
+            }
+            seen_slots.push(f.slot);
+        }
+
+        let (lo, hi) = self.record_id_range(record_id);
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        // Replace the record: clear its whole packed-id range, then insert the
+        // non-empty fields. The range delete is slot-agnostic, so stale slots
+        // left by a previous, wider field set are removed too.
+        Self::clear_id_range(&tx, lo, hi)?;
+        for f in &fields {
+            let norm = self.normalizer.normalize(&f.text);
+            if norm.is_empty() {
+                continue;
+            }
+            let id = lo | i64::from(f.slot);
+            tx.execute(
+                "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
+                params![id, &norm],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
+                params![id, &norm, &f.text],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes every field of `record_id`. A no-op if none exist.
+    pub fn remove_record(&self, record_id: i64) -> Result<(), SearchError> {
+        let bits = self.field_bits();
+        if !(0..=self.max_record_id()).contains(&record_id) {
+            return Err(SearchError::Db(format!(
+                "record_id {record_id} out of range for field_bits {bits}"
+            )));
+        }
+        let (lo, hi) = self.record_id_range(record_id);
+        let conn = self.conn.lock().unwrap();
+        Self::clear_id_range(&conn, lo, hi)?;
+        drop(conn);
+        Ok(())
+    }
+
+    /// Searches across record fields and returns at most `limit` records,
+    /// ranked by their best matching field (smallest score first).
+    ///
+    /// `fields_per_record` is the host's field count, used only as an
+    /// over-fetch hint so that collapsing field hits back to records still
+    /// yields roughly `limit` records. An empty (or whitespace-only once
+    /// normalized) query returns no records.
+    pub fn search_records(
+        &self,
+        query: String,
+        limit: u32,
+        fields_per_record: u32,
+    ) -> Result<Vec<RecordHit>, SearchError> {
+        let q = self.normalizer.normalize(&query);
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let raw_limit = limit.saturating_mul(fields_per_record.max(1));
+        let hits = {
+            let conn = self.conn.lock().unwrap();
+            self.strategy.search(&conn, &q, raw_limit)?
+        };
+
+        // Collapse field hits to records: keep the best (smallest) score and
+        // the matching slots ordered best-first.
+        let mut by_record: HashMap<i64, (f64, Vec<(u8, f64)>)> = HashMap::new();
+        for h in hits {
+            let record_id = self.record_of(h.id);
+            let slot = self.slot_of(h.id);
+            let entry = by_record
+                .entry(record_id)
+                .or_insert((f64::INFINITY, Vec::new()));
+            if h.score < entry.0 {
+                entry.0 = h.score;
+            }
+            entry.1.push((slot, h.score));
+        }
+
+        let mut out: Vec<RecordHit> = by_record
+            .into_iter()
+            .map(|(record_id, (score, mut slots))| {
+                slots.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+                RecordHit {
+                    record_id,
+                    score,
+                    matched_slots: slots.into_iter().map(|(s, _)| s).collect(),
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.score
+                .total_cmp(&b.score)
+                .then(a.record_id.cmp(&b.record_id))
+        });
+        out.truncate(limit as usize);
+        Ok(out)
+    }
+
+    /// Re-packs every stored id from the index's current `field_bits` to
+    /// `new_field_bits`, rebuilding the id encoding in place. Returns the
+    /// number of documents repacked.
+    ///
+    /// All-or-nothing: if any stored slot or record id would not fit under
+    /// `new_field_bits` (or a stored id is negative, i.e. not produced by the
+    /// record-layer API), the index is left untouched and an error is returned.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    pub fn change_field_bits(&self, new_field_bits: u8) -> Result<u64, SearchError> {
+        Self::check_field_bits(new_field_bits)?;
+        let conn = self.conn.lock().unwrap();
+        let old = self.field_bits();
+        if new_field_bits == old {
+            return Ok(0);
+        }
+        let old_mask = (1i64 << old) - 1;
+        let new_max_record = i64::MAX >> new_field_bits;
+        let new_slot_cap = 1i64 << new_field_bits;
+
+        // Load every row, then validate the whole set fits the new encoding
+        // before mutating anything.
+        let rows: Vec<(i64, String, Option<String>)> = {
+            let mut stmt = conn.prepare("SELECT id, norm, raw FROM entries")?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut repacked: Vec<(i64, String, Option<String>)> = Vec::with_capacity(rows.len());
+        for (old_id, norm, raw) in rows {
+            if old_id < 0 {
+                return Err(SearchError::Db(format!(
+                    "id {old_id} is not a packed record id; cannot change field_bits"
+                )));
+            }
+            let record = old_id >> old;
+            let slot = old_id & old_mask;
+            if slot >= new_slot_cap {
+                return Err(SearchError::Db(format!(
+                    "slot {slot} does not fit in field_bits {new_field_bits}"
+                )));
+            }
+            if record > new_max_record {
+                return Err(SearchError::Db(format!(
+                    "record id {record} does not fit in field_bits {new_field_bits}"
+                )));
+            }
+            repacked.push(((record << new_field_bits) | slot, norm, raw));
+        }
+
+        // Re-pack in one transaction: clear, then re-insert with the new ids.
+        // A wholesale rewrite avoids transient primary-key collisions that
+        // row-by-row id updates would hit when ranges overlap.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM docs", [])?;
+        tx.execute("DELETE FROM entries", [])?;
+        for (new_id, norm, raw) in &repacked {
+            tx.execute(
+                "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
+                params![new_id, norm],
+            )?;
+            tx.execute(
+                "INSERT INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
+                params![new_id, norm, raw],
+            )?;
+        }
+        Self::stamp_field_bits(&tx, new_field_bits)?;
+        tx.commit()?;
+        self.field_bits.store(new_field_bits, Ordering::Relaxed);
+        Ok(repacked.len() as u64)
+    }
 }
 
 #[cfg(test)]
@@ -414,6 +813,7 @@ mod tests {
             EngineConfig {
                 normalize: NormalizeProfile::NfkcCaseFold,
                 strategy: SearchStrategy::TrigramBm25,
+                field_bits: None,
             },
         );
         assert!(
@@ -438,10 +838,12 @@ mod tests {
         let loose = EngineConfig {
             normalize: NormalizeProfile::Loose,
             strategy: SearchStrategy::TrigramBm25,
+            field_bits: None,
         };
         let nfkc = EngineConfig {
             normalize: NormalizeProfile::NfkcCaseFold,
             strategy: SearchStrategy::TrigramBm25,
+            field_bits: None,
         };
 
         // A fresh (empty) index reports Empty for any config.
@@ -474,6 +876,7 @@ mod tests {
             EngineConfig {
                 normalize: NormalizeProfile::Loose,
                 strategy,
+                field_bits: None,
             },
         )
         .expect("open")
@@ -671,5 +1074,379 @@ mod tests {
             "suffix: '_' should only match literal '_' suffix"
         );
         assert_eq!(hits[0].id, 1);
+    }
+
+    // --- record-layer API (index_record / search_records / change_field_bits) ---
+
+    fn fv(slot: u8, text: &str) -> FieldValue {
+        FieldValue {
+            slot,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn index_record_then_search_records_collapses_by_record() {
+        let e = fresh();
+        // slot 0 = name, slot 1 = note. Two records share the term "とうきょう".
+        e.index_record(1, vec![fv(0, "とうきょう"), fv(1, "首都")])
+            .unwrap();
+        e.index_record(2, vec![fv(0, "おおさか"), fv(1, "とうきょう より西")])
+            .unwrap();
+
+        let hits = e.search_records("とうきょう".into(), 10, 2).unwrap();
+        // Both records match (record 1 via slot 0, record 2 via slot 1), and the
+        // result is one row per record, not per field.
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<i64> = hits.iter().map(|h| h.record_id).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+        // Record 1 matched on slot 0.
+        let r1 = hits.iter().find(|h| h.record_id == 1).unwrap();
+        assert_eq!(r1.matched_slots, vec![0]);
+    }
+
+    #[test]
+    fn index_record_replaces_whole_record_and_drops_empty_fields() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "さっぽろ"), fv(1, "ほっかいどう")])
+            .unwrap();
+        // Re-index the same record: slot 0 changes, slot 1 becomes empty (dropped).
+        e.index_record(1, vec![fv(0, "せんだい"), fv(1, "   ")])
+            .unwrap();
+
+        // Old slot-0 text is gone.
+        assert!(
+            e.search_records("さっぽろ".into(), 10, 2)
+                .unwrap()
+                .is_empty()
+        );
+        // Old slot-1 text is gone (was replaced by whitespace → dropped).
+        assert!(
+            e.search_records("ほっかいどう".into(), 10, 2)
+                .unwrap()
+                .is_empty()
+        );
+        // New slot-0 text is found.
+        let hits = e.search_records("せんだい".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 1);
+    }
+
+    #[test]
+    fn remove_record_drops_all_fields() {
+        let e = fresh();
+        e.index_record(7, vec![fv(0, "なごや"), fv(1, "あいち")])
+            .unwrap();
+        e.remove_record(7).unwrap();
+        assert!(e.search_records("なごや".into(), 10, 2).unwrap().is_empty());
+        assert!(e.search_records("あいち".into(), 10, 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn index_record_rejects_slot_beyond_field_bits() {
+        // field_bits = 2 → slots 0..=3 only.
+        let e = SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(2),
+            },
+        )
+        .expect("open");
+        let err = e.index_record(1, vec![fv(4, "x")]);
+        assert!(
+            matches!(err, Err(SearchError::Db(_))),
+            "slot 4 must not fit"
+        );
+    }
+
+    #[test]
+    fn field_bits_none_adopts_stored_some_mismatch_errors() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("unfydqry_fb_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_string_lossy().to_string();
+
+        // Create the index at field_bits = 10.
+        {
+            let e = SearchEngine::with_config(
+                p.clone(),
+                EngineConfig {
+                    normalize: NormalizeProfile::Loose,
+                    strategy: SearchStrategy::TrigramBm25,
+                    field_bits: Some(10),
+                },
+            )
+            .expect("open at 10");
+            e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        }
+
+        // Opening without specifying field_bits adopts the stored 10.
+        let adopt = SearchEngine::new(p.clone()).expect("adopt stored");
+        assert_eq!(adopt.field_bits(), 10);
+        drop(adopt);
+
+        // Opening with a *different* explicit value is rejected.
+        let mismatch = SearchEngine::with_config(
+            p.clone(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(8),
+            },
+        );
+        assert!(matches!(
+            mismatch,
+            Err(SearchError::FieldBitsMismatch {
+                stored: 10,
+                requested: 8
+            })
+        ));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn field_bits_out_of_range_errors() {
+        let bad = SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(63),
+            },
+        );
+        assert!(matches!(bad, Err(SearchError::Db(_))));
+    }
+
+    #[test]
+    fn change_field_bits_repacks_and_preserves_results() {
+        let e = SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(8),
+            },
+        )
+        .expect("open");
+        e.index_record(1, vec![fv(0, "とうきょう"), fv(1, "首都")])
+            .unwrap();
+        e.index_record(2, vec![fv(0, "おおさか")]).unwrap();
+
+        let n = e.change_field_bits(12).unwrap();
+        assert_eq!(n, 3, "three fields repacked");
+        assert_eq!(e.field_bits(), 12);
+
+        // Same query still finds the same record after the encoding change.
+        let hits = e.search_records("とうきょう".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 1);
+        assert_eq!(hits[0].matched_slots, vec![0]);
+    }
+
+    #[test]
+    fn change_field_bits_rejects_slot_that_would_not_fit() {
+        let e = SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(8),
+            },
+        )
+        .expect("open");
+        // slot 100 fits in 8 bits but not in 4.
+        e.index_record(1, vec![fv(100, "とうきょう")]).unwrap();
+        let err = e.change_field_bits(4);
+        assert!(
+            matches!(err, Err(SearchError::Db(_))),
+            "slot 100 must not fit in 4 bits"
+        );
+        // Index is left untouched: still queryable at the original encoding.
+        assert_eq!(e.field_bits(), 8);
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    /// In-memory engine with an explicit `field_bits` (loose + trigram/bm25).
+    fn engine_fb(field_bits: u8) -> Arc<SearchEngine> {
+        SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(field_bits),
+            },
+        )
+        .expect("open")
+    }
+
+    #[test]
+    fn index_record_rejects_negative_record_id() {
+        let e = fresh();
+        assert!(matches!(
+            e.index_record(-1, vec![fv(0, "x")]),
+            Err(SearchError::Db(_))
+        ));
+    }
+
+    #[test]
+    fn index_record_accepts_max_record_id_and_rejects_above() {
+        let e = fresh(); // field_bits 8
+        let max = i64::MAX >> 8;
+        e.index_record(max, vec![fv(0, "とうきょう")]).unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, max);
+        // One above the max no longer fits the record-id space.
+        assert!(matches!(
+            e.index_record(max + 1, vec![fv(0, "x")]),
+            Err(SearchError::Db(_))
+        ));
+    }
+
+    #[test]
+    fn index_record_rejects_duplicate_slots() {
+        let e = fresh();
+        let err = e.index_record(1, vec![fv(0, "とうきょう"), fv(0, "おおさか")]);
+        assert!(matches!(err, Err(SearchError::Db(_))), "duplicate slot 0");
+    }
+
+    #[test]
+    fn remove_record_only_affects_target_record() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        e.index_record(2, vec![fv(0, "とうきょう")]).unwrap();
+        e.remove_record(1).unwrap();
+        // Record 2 (adjacent in the packed-id space) is untouched.
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 2);
+    }
+
+    #[test]
+    fn remove_record_missing_is_noop() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        e.remove_record(999).unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 1);
+    }
+
+    #[test]
+    fn search_records_empty_query_returns_empty() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        assert!(e.search_records("   ".into(), 10, 1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_records_respects_limit() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょうタワー")]).unwrap();
+        e.index_record(2, vec![fv(0, "とうきょうスカイツリー")])
+            .unwrap();
+        e.index_record(3, vec![fv(0, "とうきょうえき")]).unwrap();
+        let hits = e.search_records("とうきょう".into(), 2, 1).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn search_records_matched_slots_lists_all_matching_fields() {
+        let e = fresh();
+        // The query hits both fields of the same record.
+        e.index_record(1, vec![fv(0, "とうきょう"), fv(1, "とうきょうタワー")])
+            .unwrap();
+        let hits = e.search_records("とうきょう".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        let mut slots = hits[0].matched_slots.clone();
+        slots.sort_unstable();
+        assert_eq!(slots, vec![0, 1]);
+    }
+
+    #[test]
+    fn change_field_bits_same_value_is_noop() {
+        let e = engine_fb(8);
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        assert_eq!(e.change_field_bits(8).unwrap(), 0);
+        assert_eq!(e.field_bits(), 8);
+    }
+
+    #[test]
+    fn change_field_bits_shrink_that_fits_succeeds() {
+        let e = engine_fb(12);
+        e.index_record(3, vec![fv(0, "とうきょう"), fv(1, "おおさか")])
+            .unwrap();
+        // Slots 0,1 and record id 3 all fit in 4 bits.
+        let n = e.change_field_bits(4).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(e.field_bits(), 4);
+        let hits = e.search_records("おおさか".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 3);
+        assert_eq!(hits[0].matched_slots, vec![1]);
+    }
+
+    #[test]
+    fn change_field_bits_rejects_non_packed_negative_id() {
+        let e = fresh(); // field_bits 8
+        // A plain `index` call may use an arbitrary (here negative) id that the
+        // record-layer packing never produces.
+        e.index(-5, "とうきょう".into()).unwrap();
+        assert!(matches!(e.change_field_bits(10), Err(SearchError::Db(_))));
+        // Untouched: the plain-search path still finds it.
+        assert_eq!(e.search("とうきょう".into(), 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn empty_index_adopts_any_field_bits_on_reopen() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("unfydqry_fb_empty_{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let p = path.to_string_lossy().to_string();
+
+        // Open empty at 8, write nothing, close.
+        {
+            let _e = SearchEngine::with_config(
+                p.clone(),
+                EngineConfig {
+                    normalize: NormalizeProfile::Loose,
+                    strategy: SearchStrategy::TrigramBm25,
+                    field_bits: Some(8),
+                },
+            )
+            .expect("open 8");
+        }
+        // Still empty → a different explicit value is adopted, not rejected.
+        let e = SearchEngine::with_config(
+            p.clone(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(10),
+            },
+        )
+        .expect("adopt 10 on empty");
+        assert_eq!(e.field_bits(), 10);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn with_options_carries_field_bits() {
+        let e = SearchEngine::with_options(
+            ":memory:".to_string(),
+            EngineOptionsConfig {
+                normalize: NormalizeProfile::Loose.options(),
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(6),
+            },
+        )
+        .expect("open");
+        assert_eq!(e.field_bits(), 6);
     }
 }

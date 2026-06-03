@@ -84,6 +84,31 @@ The host always passes only pre-normalization strings. Not exposing the
 normalization process to the host side is the precondition for the
 cross-platform consistency described later.
 
+### 1.4 Multi-field records (record-layer)
+
+The base API treats each `id` as a single text blob, but real records often
+have several searchable fields (name, reading, note). Rather than make every
+host reimplement field handling, the engine offers a thin **record layer** in
+the core: a record is indexed as one document per field, each stored under an id
+that packs `(record_id, slot)` — the high bits are the host's record id, the low
+`field_bits` bits a small per-field slot. `search_records` collapses the
+per-field hits back to one result per record, keeping the best score and
+reporting which slots matched.
+
+Putting this in the core rather than in each binding is the same decision as for
+normalization and strategies: the packing constant and the collapse logic exist
+once, so iOS, Android, and Flutter cannot diverge. The packed id never crosses
+the FFI boundary — hosts deal only in `(record_id, slot)` — so the "return ids
+only, re-fetch from the primary store" contract of §1.1 is preserved unchanged.
+
+`field_bits` is a per-index trade-off between field count and record-id range
+(`record_id ≤ 2^(63 − field_bits) − 1`, kept non-negative). It is stamped into
+the index like the normalization fingerprint (§2.5) and fixed at creation;
+changing it re-packs every id in place, all-or-nothing. Because the id encoding
+is fixed, opening with a mismatching explicit `field_bits` is rejected, while
+opening without specifying one adopts the stored value — so existing
+single-field callers are unaffected.
+
 ---
 
 ## 2. Design rationale for normalization

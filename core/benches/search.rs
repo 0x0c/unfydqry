@@ -20,6 +20,7 @@ fn build_engine(strategy: SearchStrategy, n: usize) -> std::sync::Arc<SearchEngi
     let config = EngineConfig {
         normalize: NormalizeProfile::Loose,
         strategy,
+        field_bits: None,
     };
     let engine = SearchEngine::with_config(":memory:".to_string(), config).unwrap();
     let docs = helpers::generate_docs(n);

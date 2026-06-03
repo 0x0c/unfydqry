@@ -63,6 +63,44 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
                 let hits = try engine.search(query: query, limit: UInt32(limit))
                 result(hits.map { ["id": $0.id, "score": $0.score] })
 
+            case "indexRecord":
+                guard let recordId = int64(args["recordId"]) else { return result(badArgs("recordId:Int required")) }
+                guard let rawFields = args["fields"] as? [[String: Any]] else { return result(badArgs("fields:List required")) }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let fields = rawFields.compactMap { f -> FieldValue? in
+                    guard let slot = (f["slot"] as? NSNumber)?.uint8Value,
+                          let text = f["text"] as? String else { return nil }
+                    return FieldValue(slot: slot, text: text)
+                }
+                try engine.indexRecord(recordId: recordId, fields: fields)
+                result(nil)
+
+            case "removeRecord":
+                guard let recordId = int64(args["recordId"]) else { return result(badArgs("recordId:Int required")) }
+                guard let engine = requireEngine(args, result: result) else { return }
+                try engine.removeRecord(recordId: recordId)
+                result(nil)
+
+            case "searchRecords":
+                guard let query = args["query"] as? String else { return result(badArgs("query:String required")) }
+                guard let limit = args["limit"] as? Int else { return result(badArgs("limit:Int required")) }
+                guard let fieldsPerRecord = args["fieldsPerRecord"] as? Int else { return result(badArgs("fieldsPerRecord:Int required")) }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let hits = try engine.searchRecords(
+                    query: query, limit: UInt32(limit), fieldsPerRecord: UInt32(fieldsPerRecord)
+                )
+                result(hits.map {
+                    ["recordId": $0.recordId, "score": $0.score, "matchedSlots": $0.matchedSlots.map { Int($0) }]
+                })
+
+            case "changeFieldBits":
+                guard let newFieldBits = (args["newFieldBits"] as? NSNumber)?.uint8Value else {
+                    return result(badArgs("newFieldBits:Int required"))
+                }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let count = try engine.changeFieldBits(newFieldBits: newFieldBits)
+                result(Int(count))
+
             case "dispose":
                 guard let handle = args["handle"] as? Int else {
                     return result(badArgs("handle:Int required"))

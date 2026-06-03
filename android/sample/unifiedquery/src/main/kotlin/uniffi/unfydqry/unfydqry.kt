@@ -646,13 +646,21 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_func_reindexstatuswithoptions(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_change_field_bits(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_index_record(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_reindex(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_remove_record(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_search(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_search_records(
     ): Short
     external fun uniffi_unfydqry_checksum_constructor_searchengine_new(
     ): Short
@@ -696,13 +704,21 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_unfydqry_fn_method_searchengine_change_field_bits(`ptr`: Long,`newFieldBits`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Long,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_unfydqry_fn_method_searchengine_index_record(`ptr`: Long,`recordId`: Long,`fields`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_remove(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_unfydqry_fn_method_searchengine_remove_record(`ptr`: Long,`recordId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_search(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_unfydqry_fn_method_searchengine_search_records(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_func_normalizeloose(`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -848,7 +864,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 37208.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527.toShort()) {
@@ -857,7 +879,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove() != 29881.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_search() != 13991.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373.toShort()) {
@@ -1035,6 +1063,29 @@ private class JavaLangRefCleanable(
 /**
  * @suppress
  */
+public object FfiConverterUByte: FfiConverter<UByte, Byte> {
+    override fun lift(value: Byte): UByte {
+        return value.toUByte()
+    }
+
+    override fun read(buf: ByteBuffer): UByte {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: UByte): Byte {
+        return value.toByte()
+    }
+
+    override fun allocationSize(value: UByte) = 1UL
+
+    override fun write(value: UByte, buf: ByteBuffer) {
+        buf.put(value.toByte())
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterUInt: FfiConverter<UInt, Int> {
     override fun lift(value: Int): UInt {
         return value.toUInt()
@@ -1204,6 +1255,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     }
 }
 
+/**
+ * @suppress
+ */
+public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
+    override fun read(buf: ByteBuffer): ByteArray {
+        val len = buf.getInt()
+        val byteArr = ByteArray(len)
+        buf.get(byteArr)
+        return byteArr
+    }
+    override fun allocationSize(value: ByteArray): ULong {
+        return 4UL + value.size.toULong()
+    }
+    override fun write(value: ByteArray, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        buf.put(value)
+    }
+}
+
 
 // This template implements a class for working with a Rust struct via a handle
 // to the live Rust struct on the other side of the FFI.
@@ -1317,6 +1387,17 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
 public interface SearchEngineInterface {
     
     /**
+     * Re-packs every stored id from the index's current `field_bits` to
+     * `new_field_bits`, rebuilding the id encoding in place. Returns the
+     * number of documents repacked.
+     *
+     * All-or-nothing: if any stored slot or record id would not fit under
+     * `new_field_bits` (or a stored id is negative, i.e. not produced by the
+     * record-layer API), the index is left untouched and an error is returned.
+     */
+    fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1324,6 +1405,18 @@ public interface SearchEngineInterface {
      * Calling `index` again with an existing `id` overwrites that document.
      */
     fun `index`(`id`: kotlin.Long, `text`: kotlin.String)
+    
+    /**
+     * Adds, or replaces, the whole record `record_id`, made of multiple
+     * fields.
+     *
+     * Each field is stored under a stable id that packs `(record_id, slot)`;
+     * fields that are empty once normalized are dropped. Re-calling with an
+     * existing `record_id` fully replaces its previous fields. `record_id`
+     * must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
+     * `< 2^field_bits`, otherwise an error is returned and nothing is written.
+     */
+    fun `indexRecord`(`recordId`: kotlin.Long, `fields`: List<FieldValue>)
     
     /**
      * Regenerates the index by re-normalizing every stored document's raw text
@@ -1344,6 +1437,11 @@ public interface SearchEngineInterface {
     fun `remove`(`id`: kotlin.Long)
     
     /**
+     * Removes every field of `record_id`. A no-op if none exist.
+     */
+    fun `removeRecord`(`recordId`: kotlin.Long)
+    
+    /**
      * Searches the index and returns at most `limit` hits.
      *
      * The `query` is normalized with the engine's profile and then matched
@@ -1352,6 +1450,17 @@ public interface SearchEngineInterface {
      * strategy (see `Hit.score`).
      */
     fun `search`(`query`: kotlin.String, `limit`: kotlin.UInt): List<Hit>
+    
+    /**
+     * Searches across record fields and returns at most `limit` records,
+     * ranked by their best matching field (smallest score first).
+     *
+     * `fields_per_record` is the host's field count, used only as an
+     * over-fetch hint so that collapsing field hits back to records still
+     * yields roughly `limit` records. An empty (or whitespace-only once
+     * normalized) query returns no records.
+     */
+    fun `searchRecords`(`query`: kotlin.String, `limit`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit>
     
     companion object
 }
@@ -1480,6 +1589,29 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 
     
     /**
+     * Re-packs every stored id from the index's current `field_bits` to
+     * `new_field_bits`, rebuilding the id encoding in place. Returns the
+     * number of documents repacked.
+     *
+     * All-or-nothing: if any stored slot or record id would not fit under
+     * `new_field_bits` (or a stored id is negative, i.e. not produced by the
+     * record-layer API), the index is left untouched and an error is returned.
+     */
+    @Throws(SearchException::class)override fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_change_field_bits(
+        it,
+        FfiConverterUByte.lower(`newFieldBits`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1493,6 +1625,29 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_index(
         it,
         FfiConverterLong.lower(`id`),FfiConverterString.lower(`text`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Adds, or replaces, the whole record `record_id`, made of multiple
+     * fields.
+     *
+     * Each field is stored under a stable id that packs `(record_id, slot)`;
+     * fields that are empty once normalized are dropped. Re-calling with an
+     * existing `record_id` fully replaces its previous fields. `record_id`
+     * must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
+     * `< 2^field_bits`, otherwise an error is returned and nothing is written.
+     */
+    @Throws(SearchException::class)override fun `indexRecord`(`recordId`: kotlin.Long, `fields`: List<FieldValue>)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_index_record(
+        it,
+        FfiConverterLong.lower(`recordId`),FfiConverterSequenceTypeFieldValue.lower(`fields`),_status)
 }
     }
     
@@ -1541,6 +1696,22 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 
     
     /**
+     * Removes every field of `record_id`. A no-op if none exist.
+     */
+    @Throws(SearchException::class)override fun `removeRecord`(`recordId`: kotlin.Long)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_remove_record(
+        it,
+        FfiConverterLong.lower(`recordId`),_status)
+}
+    }
+    
+    
+
+    
+    /**
      * Searches the index and returns at most `limit` hits.
      *
      * The `query` is normalized with the engine's profile and then matched
@@ -1555,6 +1726,29 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_search(
         it,
         FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Searches across record fields and returns at most `limit` records,
+     * ranked by their best matching field (smallest score first).
+     *
+     * `fields_per_record` is the host's field count, used only as an
+     * over-fetch hint so that collapsing field hits back to records still
+     * yields roughly `limit` records. An empty (or whitespace-only once
+     * normalized) query returns no records.
+     */
+    @Throws(SearchException::class)override fun `searchRecords`(`query`: kotlin.String, `limit`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit> {
+            return FfiConverterSequenceTypeRecordHit.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_search_records(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),FfiConverterUInt.lower(`fieldsPerRecord`),_status)
 }
     }
     )
@@ -1690,6 +1884,20 @@ data class EngineConfig (
      * Which query algorithm `SearchEngine.search` uses.
      */
     var `strategy`: SearchStrategy
+    , 
+    /**
+     * Low bits of each packed id reserved for the field slot in the
+     * record-layer API (`index_record` / `search_records`).
+     *
+     * `None` adopts the value the index was created with (or
+     * [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
+     * field-bits — this keeps the "open without specifying field_bits"
+     * interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+     * rejects an index stamped with a different value
+     * (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+     * `index` / `search` API.
+     */
+    var `fieldBits`: kotlin.UByte? = null 
     
 ){
     
@@ -1708,17 +1916,20 @@ public object FfiConverterTypeEngineConfig: FfiConverterRustBuffer<EngineConfig>
         return EngineConfig(
             FfiConverterTypeNormalizeProfile.read(buf),
             FfiConverterTypeSearchStrategy.read(buf),
+            FfiConverterOptionalUByte.read(buf),
         )
     }
 
     override fun allocationSize(value: EngineConfig) = (
             FfiConverterTypeNormalizeProfile.allocationSize(value.`normalize`) +
-            FfiConverterTypeSearchStrategy.allocationSize(value.`strategy`)
+            FfiConverterTypeSearchStrategy.allocationSize(value.`strategy`) +
+            FfiConverterOptionalUByte.allocationSize(value.`fieldBits`)
     )
 
     override fun write(value: EngineConfig, buf: ByteBuffer) {
             FfiConverterTypeNormalizeProfile.write(value.`normalize`, buf)
             FfiConverterTypeSearchStrategy.write(value.`strategy`, buf)
+            FfiConverterOptionalUByte.write(value.`fieldBits`, buf)
     }
 }
 
@@ -1739,6 +1950,11 @@ data class EngineOptionsConfig (
      * Which query algorithm `SearchEngine.search` uses.
      */
     var `strategy`: SearchStrategy
+    , 
+    /**
+     * See [`EngineConfig::field_bits`]. `None` adopts the stored value.
+     */
+    var `fieldBits`: kotlin.UByte? = null 
     
 ){
     
@@ -1757,17 +1973,73 @@ public object FfiConverterTypeEngineOptionsConfig: FfiConverterRustBuffer<Engine
         return EngineOptionsConfig(
             FfiConverterTypeNormalizeOptions.read(buf),
             FfiConverterTypeSearchStrategy.read(buf),
+            FfiConverterOptionalUByte.read(buf),
         )
     }
 
     override fun allocationSize(value: EngineOptionsConfig) = (
             FfiConverterTypeNormalizeOptions.allocationSize(value.`normalize`) +
-            FfiConverterTypeSearchStrategy.allocationSize(value.`strategy`)
+            FfiConverterTypeSearchStrategy.allocationSize(value.`strategy`) +
+            FfiConverterOptionalUByte.allocationSize(value.`fieldBits`)
     )
 
     override fun write(value: EngineOptionsConfig, buf: ByteBuffer) {
             FfiConverterTypeNormalizeOptions.write(value.`normalize`, buf)
             FfiConverterTypeSearchStrategy.write(value.`strategy`, buf)
+            FfiConverterOptionalUByte.write(value.`fieldBits`, buf)
+    }
+}
+
+
+
+/**
+ * A single field of a host record, for the record-layer indexing API
+ * (`index_record`).
+ *
+ * `slot` is a small, stable per-field number (0-based) chosen by the host. The
+ * engine packs `(record_id, slot)` into the stable id it stores under, so a
+ * slot, once used, must not be renumbered, and must be less than
+ * `2^field_bits`.
+ */
+data class FieldValue (
+    /**
+     * Stable per-field slot. Must be `< 2^field_bits`.
+     */
+    var `slot`: kotlin.UByte
+    , 
+    /**
+     * Raw field text; the engine normalizes it the same way as `index`.
+     */
+    var `text`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFieldValue: FfiConverterRustBuffer<FieldValue> {
+    override fun read(buf: ByteBuffer): FieldValue {
+        return FieldValue(
+            FfiConverterUByte.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FieldValue) = (
+            FfiConverterUByte.allocationSize(value.`slot`) +
+            FfiConverterString.allocationSize(value.`text`)
+    )
+
+    override fun write(value: FieldValue, buf: ByteBuffer) {
+            FfiConverterUByte.write(value.`slot`, buf)
+            FfiConverterString.write(value.`text`, buf)
     }
 }
 
@@ -1927,6 +2199,66 @@ public object FfiConverterTypeNormalizeOptions: FfiConverterRustBuffer<Normalize
 
 
 /**
+ * A record-level search result from `search_records`: the host's `record_id`,
+ * the best (smallest) score across its matching fields, and which field slots
+ * matched.
+ *
+ * As with `Hit`, the engine returns only ids and scores; the host re-fetches
+ * the full record from its own store.
+ */
+data class RecordHit (
+    /**
+     * The host record id the matching fields belong to.
+     */
+    var `recordId`: kotlin.Long
+    , 
+    /**
+     * Best (smallest) score among the record's matching fields. See `Hit.score`.
+     */
+    var `score`: kotlin.Double
+    , 
+    /**
+     * Slots of the fields that matched, ordered best (smallest score) first.
+     */
+    var `matchedSlots`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRecordHit: FfiConverterRustBuffer<RecordHit> {
+    override fun read(buf: ByteBuffer): RecordHit {
+        return RecordHit(
+            FfiConverterLong.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RecordHit) = (
+            FfiConverterLong.allocationSize(value.`recordId`) +
+            FfiConverterDouble.allocationSize(value.`score`) +
+            FfiConverterByteArray.allocationSize(value.`matchedSlots`)
+    )
+
+    override fun write(value: RecordHit, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`recordId`, buf)
+            FfiConverterDouble.write(value.`score`, buf)
+            FfiConverterByteArray.write(value.`matchedSlots`, buf)
+    }
+}
+
+
+
+/**
  * Which normalization pipeline runs at index and query time.
  *
  * `Loose` is the original behaviour (NFKC → katakana→hiragana → lowercase).
@@ -2059,6 +2391,23 @@ sealed class SearchException: kotlin.Exception() {
             get() = "stored=${ `stored` }, requested=${ `requested` }"
     }
     
+    /**
+     * The index was created with a different `field_bits` than requested. The
+     * id packing is encoding-specific and fixed at creation, so this is not
+     * auto-rebuilt: open with `field_bits: None` to adopt the stored value, or
+     * call `change_field_bits` to re-pack the index. `stored` is the value
+     * recorded in the index; `requested` is the one just asked for.
+     */
+    class FieldBitsMismatch(
+        
+        val `stored`: kotlin.UByte, 
+        
+        val `requested`: kotlin.UByte
+        ) : SearchException() {
+        override val message
+            get() = "stored=${ `stored` }, requested=${ `requested` }"
+    }
+    
 
     
 
@@ -2085,6 +2434,10 @@ public object FfiConverterTypeSearchError : FfiConverterRustBuffer<SearchExcepti
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
+            3 -> SearchException.FieldBitsMismatch(
+                FfiConverterUByte.read(buf),
+                FfiConverterUByte.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -2102,6 +2455,12 @@ public object FfiConverterTypeSearchError : FfiConverterRustBuffer<SearchExcepti
                 + FfiConverterString.allocationSize(value.`stored`)
                 + FfiConverterString.allocationSize(value.`requested`)
             )
+            is SearchException.FieldBitsMismatch -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterUByte.allocationSize(value.`stored`)
+                + FfiConverterUByte.allocationSize(value.`requested`)
+            )
         }
     }
 
@@ -2116,6 +2475,12 @@ public object FfiConverterTypeSearchError : FfiConverterRustBuffer<SearchExcepti
                 buf.putInt(2)
                 FfiConverterString.write(value.`stored`, buf)
                 FfiConverterString.write(value.`requested`, buf)
+                Unit
+            }
+            is SearchException.FieldBitsMismatch -> {
+                buf.putInt(3)
+                FfiConverterUByte.write(value.`stored`, buf)
+                FfiConverterUByte.write(value.`requested`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2196,6 +2561,66 @@ public object FfiConverterTypeSearchStrategy: FfiConverterRustBuffer<SearchStrat
 /**
  * @suppress
  */
+public object FfiConverterOptionalUByte: FfiConverterRustBuffer<kotlin.UByte?> {
+    override fun read(buf: ByteBuffer): kotlin.UByte? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUByte.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UByte?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUByte.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UByte?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUByte.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFieldValue: FfiConverterRustBuffer<List<FieldValue>> {
+    override fun read(buf: ByteBuffer): List<FieldValue> {
+        val len = buf.getInt()
+        return List<FieldValue>(len) {
+            FfiConverterTypeFieldValue.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FieldValue>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFieldValue.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FieldValue>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFieldValue.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
     override fun read(buf: ByteBuffer): List<Hit> {
         val len = buf.getInt()
@@ -2214,6 +2639,34 @@ public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeHit.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer<List<RecordHit>> {
+    override fun read(buf: ByteBuffer): List<RecordHit> {
+        val len = buf.getInt()
+        return List<RecordHit>(len) {
+            FfiConverterTypeRecordHit.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RecordHit>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRecordHit.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RecordHit>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRecordHit.write(it, buf)
         }
     }
 }

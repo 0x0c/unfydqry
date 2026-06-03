@@ -105,6 +105,7 @@ fn ec_from(config: &Option<SpecConfig>) -> EngineConfig {
     EngineConfig {
         normalize: profile_from(cfg.and_then(|c| c.normalize.as_deref())),
         strategy: strategy_from(cfg.and_then(|c| c.strategy.as_deref())),
+        field_bits: None,
     }
 }
 
@@ -119,6 +120,7 @@ fn engine_for(config: &Option<SpecConfig>) -> std::sync::Arc<SearchEngine> {
             EngineOptionsConfig {
                 normalize: opts.to_ffi(),
                 strategy,
+                field_bits: None,
             },
         )
         .expect("open engine (options)");

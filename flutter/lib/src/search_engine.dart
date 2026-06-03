@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 
+import 'field_value.dart';
 import 'hit.dart';
+import 'record_hit.dart';
 import 'search_exception.dart';
 
 /// Thin wrapper around the platform's SearchEngine.
@@ -70,6 +72,74 @@ class SearchEngine {
     } catch (e) {
       throw SearchException('malformed hit payload: $e');
     }
+  }
+
+  /// Adds, or replaces, the whole record [recordId] made of multiple [fields].
+  ///
+  /// Each field is stored under a stable id packing `(recordId, slot)`; fields
+  /// empty once normalized are dropped. Re-calling with an existing [recordId]
+  /// fully replaces its previous fields.
+  Future<void> indexRecord(int recordId, List<FieldValue> fields) {
+    _checkAlive();
+    return _channel.invokeMethod<void>('indexRecord', {
+      'handle': _handle,
+      'recordId': recordId,
+      'fields': fields.map((f) => f.toMap()).toList(),
+    });
+  }
+
+  /// Removes every field of [recordId] from the index.
+  Future<void> removeRecord(int recordId) {
+    _checkAlive();
+    return _channel.invokeMethod<void>(
+      'removeRecord',
+      {'handle': _handle, 'recordId': recordId},
+    );
+  }
+
+  /// Searches across record fields, returning at most [limit] records ranked by
+  /// their best matching field.
+  ///
+  /// [fieldsPerRecord] is the host's field count, used as an over-fetch hint so
+  /// collapsing field hits to records still yields roughly [limit] records.
+  Future<List<RecordHit>> searchRecords(
+    String query, {
+    int limit = 50,
+    required int fieldsPerRecord,
+  }) async {
+    _checkAlive();
+    final raw = await _channel.invokeMethod<List<dynamic>>('searchRecords', {
+      'handle': _handle,
+      'query': query,
+      'limit': limit,
+      'fieldsPerRecord': fieldsPerRecord,
+    });
+    try {
+      return (raw ?? [])
+          .cast<Map<dynamic, dynamic>>()
+          .map((m) => RecordHit(
+                recordId: (m['recordId'] as num).toInt(),
+                score: (m['score'] as num).toDouble(),
+                matchedSlots: (m['matchedSlots'] as List<dynamic>)
+                    .map((s) => (s as num).toInt())
+                    .toList(),
+              ))
+          .toList();
+    } catch (e) {
+      throw SearchException('malformed record hit payload: $e');
+    }
+  }
+
+  /// Re-packs the index from its current `fieldBits` to [newFieldBits],
+  /// rebuilding the id encoding in place. Returns the number of documents
+  /// repacked. Throws if a stored slot or record id would not fit.
+  Future<int> changeFieldBits(int newFieldBits) async {
+    _checkAlive();
+    final n = await _channel.invokeMethod<int>(
+      'changeFieldBits',
+      {'handle': _handle, 'newFieldBits': newFieldBits},
+    );
+    return n ?? 0;
   }
 
   /// Releases native resources. The engine must not be used after this.

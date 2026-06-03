@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import uniffi.unfydqry.EngineOptionsConfig
+import uniffi.unfydqry.FieldValue
 import uniffi.unfydqry.NormalizeOptions
 import uniffi.unfydqry.ReindexStatus
 import uniffi.unfydqry.SearchEngine
@@ -48,9 +49,23 @@ import uniffi.unfydqry.SearchStrategy
 import uniffi.unfydqry.normalizeWithOptions
 import uniffi.unfydqry.reindexStatusWithOptions
 
-/// Minimal record standing in for the app's "source-of-truth DB" (equivalent to a
-/// SwiftData / Room entity).
-data class Record(val id: Long, val text: String)
+/// Minimal multi-field record standing in for the app's "source-of-truth DB"
+/// (equivalent to a SwiftData / Room entity with several searchable columns).
+data class Record(val id: Long, val name: String, val yomi: String)
+
+// Field slots for the record-layer API. Stable, never renumbered.
+private const val SLOT_NAME = 0
+private const val SLOT_YOMI = 1
+private const val FIELD_COUNT: UInt = 2u
+
+private fun slotLabel(slot: UByte): String = when (slot.toInt()) {
+    SLOT_NAME -> "名前"
+    SLOT_YOMI -> "よみ"
+    else -> "slot $slot"
+}
+
+/// A search result row: the record plus which of its fields matched.
+data class ResultRow(val record: Record, val matchedSlots: List<UByte>)
 
 /// The `loose` preset as composable options (lowercase + kana fold).
 private fun looseOptions() = NormalizeOptions(lowercase = true, kanaFold = true)
@@ -105,31 +120,29 @@ class MainActivity : ComponentActivity() {
     // Same seed as the iOS sample, so the same hit IDs can be eyeballed across both OSes.
     // Returns the id → Record store used to re-fetch records.
     private fun seed(engine: SearchEngine): Map<Long, Record> {
+        // Multi-field records (name + reading). The same seed is used across the
+        // iOS, Android, and Flutter samples so hits can be compared by id.
         val docs = listOf(
-            Record(1L, "東京タワー"),
-            Record(2L, "とうきょうスカイツリー"),
-            Record(3L, "ﾄｳｷｮｳ ﾄﾞｰﾑ"),
-            Record(4L, "Osaka 城"),
-            Record(5L, "がっこう ぐらし"),
-            Record(6L, "かっこう の歌"),
-            Record(7L, "Ｐｙｔｈｏｎ 入門"),
-            Record(8L, "ぱんだ と ﾊﾟﾝﾀﾞ"),
-            Record(9L, "コーヒーサーバー"),
-            Record(10L, "café オレ"),
-            Record(11L, "プリンター ドライバー"),
-            Record(12L, "データベース サーバー"),
-            Record(13L, "ﾊﾝﾊﾞｰｶﾞｰ ショップ"),
-            Record(14L, "résumé を書く"),
-            Record(15L, "Pokémon GO"),
-            Record(16L, "時々 雨のち晴れ"),
-            Record(17L, "人々 の声"),
-            Record(18L, "いすゞ 自動車"),
-            Record(19L, "こゝろ 夏目漱石"),
-            Record(20L, "東京–大阪 新幹線"),
-            Record(21L, "予算 1,000,000 円"),
-            Record(22L, "在庫 1,234 個"),
+            Record(1L, "東京タワー", "とうきょうたわー"),
+            Record(2L, "スカイツリー", "すかいつりー"),
+            Record(3L, "大阪城", "おおさかじょう"),
+            Record(4L, "名古屋テレビ塔", "なごやてれびとう"),
+            Record(5L, "札幌時計台", "さっぽろとけいだい"),
+            Record(6L, "コーヒーサーバー", "こーひーさーばー"),
+            Record(7L, "データベース", "でーたべーす"),
+            Record(8L, "プリンター", "ぷりんたー"),
         )
-        docs.forEach { engine.index(it.id, it.text) }
+        docs.forEach { r ->
+            // The engine packs (id, slot) internally; we pass our record id and a
+            // slot per field, and get record ids back from searchRecords.
+            engine.indexRecord(
+                recordId = r.id,
+                fields = listOf(
+                    FieldValue(slot = SLOT_NAME.toUByte(), text = r.name),
+                    FieldValue(slot = SLOT_YOMI.toUByte(), text = r.yomi),
+                ),
+            )
+        }
         return docs.associateBy { it.id }
     }
 }
@@ -148,9 +161,11 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
     var needsReindex by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
-    val allDocs = remember(store) { store.values.sortedBy { it.id } }
-    // Prefilled so the initial empty query shows every doc without a flash.
-    val results = remember { mutableStateListOf<Record>().apply { addAll(allDocs) } }
+    val allDocs = remember(store) {
+        store.values.sortedBy { it.id }.map { ResultRow(it, emptyList()) }
+    }
+    // Prefilled so the initial empty query shows every record without a flash.
+    val results = remember { mutableStateListOf<ResultRow>().apply { addAll(allDocs) } }
 
     fun runSearch() {
         if (query.isBlank()) {
@@ -159,14 +174,14 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
             status = "全件表示 (${results.size})"
             return
         }
-        val hits = engine.search(query, 50u)
-        // Minimal implementation of design doc §1.3 ("return IDs only / re-fetch
-        // from the source-of-truth DB").
-        val records = hits.mapNotNull { store[it.id] }
+        // Record-layer search: hits collapse to one row per record, with the
+        // matched field slots. The host re-fetches records by id from `store`.
+        val hits = engine.searchRecords(query, 50u, FIELD_COUNT)
+        val rows = hits.mapNotNull { h -> store[h.recordId]?.let { ResultRow(it, h.matchedSlots) } }
         results.clear()
-        results.addAll(records)
+        results.addAll(rows)
         // Results reflect the *applied* normalization until a reindex.
-        status = "hits: ${records.size}  normalized=\"${normalizeWithOptions(query, applied)}\""
+        status = "hits: ${rows.size}  normalized=\"${normalizeWithOptions(query, applied)}\""
     }
 
     // Toggling a step only detects whether a reindex is needed; it does not rebuild.
@@ -247,11 +262,21 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
             Text(status, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(results, key = { it.id }) { record ->
+                items(results, key = { it.record.id }) { row ->
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text(record.text, style = MaterialTheme.typography.bodyLarge)
+                        Text(row.record.name, style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "id=${record.id}",
+                            "よみ: ${row.record.yomi}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val matched = if (row.matchedSlots.isEmpty()) {
+                            ""
+                        } else {
+                            "  一致: ${row.matchedSlots.joinToString(", ") { slotLabel(it) }}"
+                        }
+                        Text(
+                            "id=${row.record.id}$matched",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

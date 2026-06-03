@@ -419,6 +419,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
+    typealias FfiType = UInt8
+    typealias SwiftType = UInt8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: UInt8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -545,6 +561,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -565,6 +599,17 @@ fileprivate struct FfiConverterString: FfiConverter {
 public protocol SearchEngineProtocol: AnyObject, Sendable {
     
     /**
+     * Re-packs every stored id from the index's current `field_bits` to
+     * `new_field_bits`, rebuilding the id encoding in place. Returns the
+     * number of documents repacked.
+     *
+     * All-or-nothing: if any stored slot or record id would not fit under
+     * `new_field_bits` (or a stored id is negative, i.e. not produced by the
+     * record-layer API), the index is left untouched and an error is returned.
+     */
+    func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -572,6 +617,18 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * Calling `index` again with an existing `id` overwrites that document.
      */
     func index(id: Int64, text: String) throws 
+    
+    /**
+     * Adds, or replaces, the whole record `record_id`, made of multiple
+     * fields.
+     *
+     * Each field is stored under a stable id that packs `(record_id, slot)`;
+     * fields that are empty once normalized are dropped. Re-calling with an
+     * existing `record_id` fully replaces its previous fields. `record_id`
+     * must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
+     * `< 2^field_bits`, otherwise an error is returned and nothing is written.
+     */
+    func indexRecord(recordId: Int64, fields: [FieldValue]) throws 
     
     /**
      * Regenerates the index by re-normalizing every stored document's raw text
@@ -592,6 +649,11 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func remove(id: Int64) throws 
     
     /**
+     * Removes every field of `record_id`. A no-op if none exist.
+     */
+    func removeRecord(recordId: Int64) throws 
+    
+    /**
      * Searches the index and returns at most `limit` hits.
      *
      * The `query` is normalized with the engine's profile and then matched
@@ -600,6 +662,17 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * strategy (see `Hit.score`).
      */
     func search(query: String, limit: UInt32) throws  -> [Hit]
+    
+    /**
+     * Searches across record fields and returns at most `limit` records,
+     * ranked by their best matching field (smallest score first).
+     *
+     * `fields_per_record` is the host's field count, used only as an
+     * over-fetch hint so that collapsing field hits back to records still
+     * yields roughly `limit` records. An empty (or whitespace-only once
+     * normalized) query returns no records.
+     */
+    func searchRecords(query: String, limit: UInt32, fieldsPerRecord: UInt32) throws  -> [RecordHit]
     
 }
 /**
@@ -748,6 +821,24 @@ public static func withOptionsRebuilding(dbPath: String, config: EngineOptionsCo
 
     
     /**
+     * Re-packs every stored id from the index's current `field_bits` to
+     * `new_field_bits`, rebuilding the id encoding in place. Returns the
+     * number of documents repacked.
+     *
+     * All-or-nothing: if any stored slot or record id would not fit under
+     * `new_field_bits` (or a stored id is negative, i.e. not produced by the
+     * record-layer API), the index is left untouched and an error is returned.
+     */
+open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_change_field_bits(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt8.lower(newFieldBits),$0
+    )
+})
+}
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -759,6 +850,25 @@ open func index(id: Int64, text: String)throws   {try rustCallWithError(FfiConve
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(id),
         FfiConverterString.lower(text),$0
+    )
+}
+}
+    
+    /**
+     * Adds, or replaces, the whole record `record_id`, made of multiple
+     * fields.
+     *
+     * Each field is stored under a stable id that packs `(record_id, slot)`;
+     * fields that are empty once normalized are dropped. Re-calling with an
+     * existing `record_id` fully replaces its previous fields. `record_id`
+     * must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
+     * `< 2^field_bits`, otherwise an error is returned and nothing is written.
+     */
+open func indexRecord(recordId: Int64, fields: [FieldValue])throws   {try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_index_record(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(recordId),
+        FfiConverterSequenceTypeFieldValue.lower(fields),$0
     )
 }
 }
@@ -794,6 +904,17 @@ open func remove(id: Int64)throws   {try rustCallWithError(FfiConverterTypeSearc
 }
     
     /**
+     * Removes every field of `record_id`. A no-op if none exist.
+     */
+open func removeRecord(recordId: Int64)throws   {try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_remove_record(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(recordId),$0
+    )
+}
+}
+    
+    /**
      * Searches the index and returns at most `limit` hits.
      *
      * The `query` is normalized with the engine's profile and then matched
@@ -807,6 +928,26 @@ open func search(query: String, limit: UInt32)throws  -> [Hit]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+    /**
+     * Searches across record fields and returns at most `limit` records,
+     * ranked by their best matching field (smallest score first).
+     *
+     * `fields_per_record` is the host's field count, used only as an
+     * over-fetch hint so that collapsing field hits back to records still
+     * yields roughly `limit` records. An empty (or whitespace-only once
+     * normalized) query returns no records.
+     */
+open func searchRecords(query: String, limit: UInt32, fieldsPerRecord: UInt32)throws  -> [RecordHit]  {
+    return try  FfiConverterSequenceTypeRecordHit.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_search_records(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(limit),
+        FfiConverterUInt32.lower(fieldsPerRecord),$0
     )
 })
 }
@@ -871,6 +1012,19 @@ public struct EngineConfig: Equatable, Hashable {
      * Which query algorithm `SearchEngine.search` uses.
      */
     public var strategy: SearchStrategy
+    /**
+     * Low bits of each packed id reserved for the field slot in the
+     * record-layer API (`index_record` / `search_records`).
+     *
+     * `None` adopts the value the index was created with (or
+     * [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
+     * field-bits — this keeps the "open without specifying field_bits"
+     * interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+     * rejects an index stamped with a different value
+     * (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+     * `index` / `search` API.
+     */
+    public var fieldBits: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -880,9 +1034,22 @@ public struct EngineConfig: Equatable, Hashable {
          */normalize: NormalizeProfile, 
         /**
          * Which query algorithm `SearchEngine.search` uses.
-         */strategy: SearchStrategy) {
+         */strategy: SearchStrategy, 
+        /**
+         * Low bits of each packed id reserved for the field slot in the
+         * record-layer API (`index_record` / `search_records`).
+         *
+         * `None` adopts the value the index was created with (or
+         * [`DEFAULT_FIELD_BITS`] for a fresh index) and never errors on
+         * field-bits — this keeps the "open without specifying field_bits"
+         * interface working. `Some(n)` requires `n` (which must be in `1..=62`) and
+         * rejects an index stamped with a different value
+         * (`SearchError::FieldBitsMismatch`). Irrelevant to the plain
+         * `index` / `search` API.
+         */fieldBits: UInt8? = nil) {
         self.normalize = normalize
         self.strategy = strategy
+        self.fieldBits = fieldBits
     }
 
     
@@ -902,13 +1069,15 @@ public struct FfiConverterTypeEngineConfig: FfiConverterRustBuffer {
         return
             try EngineConfig(
                 normalize: FfiConverterTypeNormalizeProfile.read(from: &buf), 
-                strategy: FfiConverterTypeSearchStrategy.read(from: &buf)
+                strategy: FfiConverterTypeSearchStrategy.read(from: &buf), 
+                fieldBits: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
     public static func write(_ value: EngineConfig, into buf: inout [UInt8]) {
         FfiConverterTypeNormalizeProfile.write(value.normalize, into: &buf)
         FfiConverterTypeSearchStrategy.write(value.strategy, into: &buf)
+        FfiConverterOptionUInt8.write(value.fieldBits, into: &buf)
     }
 }
 
@@ -942,6 +1111,10 @@ public struct EngineOptionsConfig: Equatable, Hashable {
      * Which query algorithm `SearchEngine.search` uses.
      */
     public var strategy: SearchStrategy
+    /**
+     * See [`EngineConfig::field_bits`]. `None` adopts the stored value.
+     */
+    public var fieldBits: UInt8?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -951,9 +1124,13 @@ public struct EngineOptionsConfig: Equatable, Hashable {
          */normalize: NormalizeOptions, 
         /**
          * Which query algorithm `SearchEngine.search` uses.
-         */strategy: SearchStrategy) {
+         */strategy: SearchStrategy, 
+        /**
+         * See [`EngineConfig::field_bits`]. `None` adopts the stored value.
+         */fieldBits: UInt8? = nil) {
         self.normalize = normalize
         self.strategy = strategy
+        self.fieldBits = fieldBits
     }
 
     
@@ -973,13 +1150,15 @@ public struct FfiConverterTypeEngineOptionsConfig: FfiConverterRustBuffer {
         return
             try EngineOptionsConfig(
                 normalize: FfiConverterTypeNormalizeOptions.read(from: &buf), 
-                strategy: FfiConverterTypeSearchStrategy.read(from: &buf)
+                strategy: FfiConverterTypeSearchStrategy.read(from: &buf), 
+                fieldBits: FfiConverterOptionUInt8.read(from: &buf)
         )
     }
 
     public static func write(_ value: EngineOptionsConfig, into buf: inout [UInt8]) {
         FfiConverterTypeNormalizeOptions.write(value.normalize, into: &buf)
         FfiConverterTypeSearchStrategy.write(value.strategy, into: &buf)
+        FfiConverterOptionUInt8.write(value.fieldBits, into: &buf)
     }
 }
 
@@ -996,6 +1175,81 @@ public func FfiConverterTypeEngineOptionsConfig_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeEngineOptionsConfig_lower(_ value: EngineOptionsConfig) -> RustBuffer {
     return FfiConverterTypeEngineOptionsConfig.lower(value)
+}
+
+
+/**
+ * A single field of a host record, for the record-layer indexing API
+ * (`index_record`).
+ *
+ * `slot` is a small, stable per-field number (0-based) chosen by the host. The
+ * engine packs `(record_id, slot)` into the stable id it stores under, so a
+ * slot, once used, must not be renumbered, and must be less than
+ * `2^field_bits`.
+ */
+public struct FieldValue: Equatable, Hashable {
+    /**
+     * Stable per-field slot. Must be `< 2^field_bits`.
+     */
+    public var slot: UInt8
+    /**
+     * Raw field text; the engine normalizes it the same way as `index`.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable per-field slot. Must be `< 2^field_bits`.
+         */slot: UInt8, 
+        /**
+         * Raw field text; the engine normalizes it the same way as `index`.
+         */text: String) {
+        self.slot = slot
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FieldValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFieldValue: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FieldValue {
+        return
+            try FieldValue(
+                slot: FfiConverterUInt8.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FieldValue, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.slot, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFieldValue_lift(_ buf: RustBuffer) throws -> FieldValue {
+    return try FfiConverterTypeFieldValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFieldValue_lower(_ value: FieldValue) -> RustBuffer {
+    return FfiConverterTypeFieldValue.lower(value)
 }
 
 
@@ -1210,6 +1464,90 @@ public func FfiConverterTypeNormalizeOptions_lower(_ value: NormalizeOptions) ->
     return FfiConverterTypeNormalizeOptions.lower(value)
 }
 
+
+/**
+ * A record-level search result from `search_records`: the host's `record_id`,
+ * the best (smallest) score across its matching fields, and which field slots
+ * matched.
+ *
+ * As with `Hit`, the engine returns only ids and scores; the host re-fetches
+ * the full record from its own store.
+ */
+public struct RecordHit: Equatable, Hashable {
+    /**
+     * The host record id the matching fields belong to.
+     */
+    public var recordId: Int64
+    /**
+     * Best (smallest) score among the record's matching fields. See `Hit.score`.
+     */
+    public var score: Double
+    /**
+     * Slots of the fields that matched, ordered best (smallest score) first.
+     */
+    public var matchedSlots: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The host record id the matching fields belong to.
+         */recordId: Int64, 
+        /**
+         * Best (smallest) score among the record's matching fields. See `Hit.score`.
+         */score: Double, 
+        /**
+         * Slots of the fields that matched, ordered best (smallest score) first.
+         */matchedSlots: Data) {
+        self.recordId = recordId
+        self.score = score
+        self.matchedSlots = matchedSlots
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RecordHit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecordHit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecordHit {
+        return
+            try RecordHit(
+                recordId: FfiConverterInt64.read(from: &buf), 
+                score: FfiConverterDouble.read(from: &buf), 
+                matchedSlots: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecordHit, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.recordId, into: &buf)
+        FfiConverterDouble.write(value.score, into: &buf)
+        FfiConverterData.write(value.matchedSlots, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordHit_lift(_ buf: RustBuffer) throws -> RecordHit {
+    return try FfiConverterTypeRecordHit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordHit_lower(_ value: RecordHit) -> RustBuffer {
+    return FfiConverterTypeRecordHit.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -1402,6 +1740,15 @@ public enum SearchError: Swift.Error, Equatable, Hashable, Foundation.LocalizedE
      */
     case ConfigMismatch(stored: String, requested: String
     )
+    /**
+     * The index was created with a different `field_bits` than requested. The
+     * id packing is encoding-specific and fixed at creation, so this is not
+     * auto-rebuilt: open with `field_bits: None` to adopt the stored value, or
+     * call `change_field_bits` to re-pack the index. `stored` is the value
+     * recorded in the index; `requested` is the one just asked for.
+     */
+    case FieldBitsMismatch(stored: UInt8, requested: UInt8
+    )
 
     
 
@@ -1438,6 +1785,10 @@ public struct FfiConverterTypeSearchError: FfiConverterRustBuffer {
             stored: try FfiConverterString.read(from: &buf), 
             requested: try FfiConverterString.read(from: &buf)
             )
+        case 3: return .FieldBitsMismatch(
+            stored: try FfiConverterUInt8.read(from: &buf), 
+            requested: try FfiConverterUInt8.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1459,6 +1810,12 @@ public struct FfiConverterTypeSearchError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
             FfiConverterString.write(stored, into: &buf)
             FfiConverterString.write(requested, into: &buf)
+            
+        
+        case let .FieldBitsMismatch(stored,requested):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt8.write(stored, into: &buf)
+            FfiConverterUInt8.write(requested, into: &buf)
             
         }
     }
@@ -1618,6 +1975,55 @@ public func FfiConverterTypeSearchStrategy_lower(_ value: SearchStrategy) -> Rus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
+    typealias SwiftType = UInt8?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt8.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt8.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFieldValue: FfiConverterRustBuffer {
+    typealias SwiftType = [FieldValue]
+
+    public static func write(_ value: [FieldValue], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFieldValue.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FieldValue] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FieldValue]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFieldValue.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
     typealias SwiftType = [Hit]
 
@@ -1635,6 +2041,31 @@ fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer {
+    typealias SwiftType = [RecordHit]
+
+    public static func write(_ value: [RecordHit], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRecordHit.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RecordHit] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RecordHit]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRecordHit.read(from: &buf))
         }
         return seq
     }
@@ -1734,7 +2165,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_func_reindexstatuswithoptions() != 37208) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527) {
@@ -1743,7 +2180,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_remove() != 29881) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_method_searchengine_search() != 13991) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373) {

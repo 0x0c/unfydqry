@@ -24,6 +24,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import uniffi.unfydqry.FieldValue
 import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.SearchException
 
@@ -85,6 +86,61 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
                     val engine = engine(call, result) ?: return
                     val hits = engine.search(query = query, limit = limit.toUInt())
                     result.success(hits.map { mapOf("id" to it.id, "score" to it.score) })
+                }
+
+                "indexRecord" -> {
+                    val recordId = call.longArg("recordId")
+                        ?: return result.badArgs("recordId:Int required")
+                    val rawFields = call.argument<List<Map<String, Any>>>("fields")
+                        ?: return result.badArgs("fields:List required")
+                    val engine = engine(call, result) ?: return
+                    val fields = rawFields.mapNotNull { f ->
+                        val slot = (f["slot"] as? Number)?.toInt() ?: return@mapNotNull null
+                        val text = f["text"] as? String ?: return@mapNotNull null
+                        FieldValue(slot = slot.toUByte(), text = text)
+                    }
+                    engine.indexRecord(recordId = recordId, fields = fields)
+                    result.success(null)
+                }
+
+                "removeRecord" -> {
+                    val recordId = call.longArg("recordId")
+                        ?: return result.badArgs("recordId:Int required")
+                    val engine = engine(call, result) ?: return
+                    engine.removeRecord(recordId = recordId)
+                    result.success(null)
+                }
+
+                "searchRecords" -> {
+                    val query = call.argument<String>("query")
+                        ?: return result.badArgs("query:String required")
+                    val limit = call.argument<Int>("limit")
+                        ?: return result.badArgs("limit:Int required")
+                    val fieldsPerRecord = call.argument<Int>("fieldsPerRecord")
+                        ?: return result.badArgs("fieldsPerRecord:Int required")
+                    val engine = engine(call, result) ?: return
+                    val hits = engine.searchRecords(
+                        query = query,
+                        limit = limit.toUInt(),
+                        fieldsPerRecord = fieldsPerRecord.toUInt(),
+                    )
+                    result.success(
+                        hits.map {
+                            mapOf(
+                                "recordId" to it.recordId,
+                                "score" to it.score,
+                                "matchedSlots" to it.matchedSlots.map { s -> s.toInt() },
+                            )
+                        },
+                    )
+                }
+
+                "changeFieldBits" -> {
+                    val newFieldBits = call.argument<Int>("newFieldBits")
+                        ?: return result.badArgs("newFieldBits:Int required")
+                    val engine = engine(call, result) ?: return
+                    val count = engine.changeFieldBits(newFieldBits = newFieldBits.toUByte())
+                    result.success(count.toLong())
                 }
 
                 "dispose" -> {
