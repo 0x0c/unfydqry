@@ -161,5 +161,5 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.value }}
           name: ${{ steps.version.outputs.value }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: ios/UnifiedQuery.xcframework.zip
