@@ -1,9 +1,8 @@
 # Flutter Plugin
 
-> **Advanced usage** — the Flutter plugin wraps the iOS and Android native
-> bindings behind a Dart method-channel API. It requires native artifacts to
-> be built first and is intended for teams already using Flutter. If you only
-> target Android or iOS natively, use the dedicated platform binding instead.
+> **Advanced usage** — the Flutter plugin wraps the iOS and Android native bindings behind a Dart method-channel API.
+> It requires native artifacts to be built first and is intended for teams already using Flutter.
+> If you only target Android or iOS natively, use the dedicated platform binding instead.
 
 ## Layout
 
@@ -44,15 +43,13 @@ await engine.remove(1);
 await engine.dispose();
 ```
 
-`Hit.id` is the same stable identifier passed to `index`. Re-fetch the full
-record from your source-of-truth store.
+`Hit.id` is the same stable identifier passed to `index`.
+Re-fetch the full record from your source-of-truth store.
 
 ### Multi-field records (record-layer API)
 
-Index a record's fields separately and search across all of them, getting back
-one `RecordHit` per record plus which field matched. The concept (packing,
-`field_bits`) is in
-[Multi-field records](../README.md#multi-field-records-record-layer-api).
+Index a record's fields separately and search across all of them, getting back one `RecordHit` per record plus which field matched.
+The concept (packing, `field_bits`) is in [Multi-field records](../README.md#multi-field-records-record-layer-api).
 
 ```dart
 // Index a record built from several fields; each field gets a stable slot.
@@ -71,16 +68,13 @@ await engine.removeRecord(1);
 final repacked = await engine.changeFieldBits(10);
 ```
 
-`SearchEngine.open` uses the default engine (field_bits adopted from the index,
-or 8 for a fresh one). `RecordHit` carries `recordId`, `score`, and
-`matchedSlots`.
+`SearchEngine.open` uses the default engine (field_bits adopted from the index, or 8 for a fresh one).
+`RecordHit` carries `recordId`, `score`, and `matchedSlots`.
 
 ### Normalization options and search strategy
 
-Open with an explicit normalization profile (`NormalizeOptions`) and query
-algorithm (`SearchStrategy`), preview how text normalizes, and detect when the
-stored index no longer matches the chosen options. This mirrors the iOS/Android
-sample settings UI.
+Open with an explicit normalization profile (`NormalizeOptions`) and query algorithm (`SearchStrategy`), preview how text normalizes, and detect when the stored index no longer matches the chosen options.
+This mirrors the iOS/Android sample settings UI.
 
 ```dart
 // Open applying a profile + strategy. The *Rebuilding variant regenerates the
@@ -107,10 +101,8 @@ final status = await SearchEngine.reindexStatus(dbPath,
 
 ## Install
 
-The plugin is **not** published to pub.dev — it lives in-tree under `flutter/`
-and is consumed as a Git dependency. It also requires the native artifacts
-(XCFramework + `.so`) to be built first, so it is intended for teams already
-using Flutter:
+The plugin is **not** published to pub.dev — it lives in-tree under `flutter/` and is consumed as a Git dependency.
+It also requires the native artifacts (XCFramework + `.so`) to be built first, so it is intended for teams already using Flutter:
 
 ```yaml
 # pubspec.yaml
@@ -125,19 +117,16 @@ dependencies:
 flutter pub get
 ```
 
-> The plugin pulls the prebuilt native binaries from the repo's `ios/` and
-> `android/jniLibs/` trees, so build them once before `flutter run` — see
-> [Building native artifacts](#building-native-artifacts).
+> The plugin pulls the prebuilt native binaries from the repo's `ios/` and `android/jniLibs/` trees, so build them once before `flutter run` — see [Building native artifacts](#building-native-artifacts).
 
-The iOS side is a **Swift Package Manager** plugin (no CocoaPods). Enable SPM
-once per machine:
+The iOS side is a **Swift Package Manager** plugin (no CocoaPods).
+Enable SPM once per machine:
 
 ```sh
 flutter config --enable-swift-package-manager
 ```
 
-Because the plugin reuses the Rust core's Swift binding, the consuming app must
-target **iOS 18+**.
+Because the plugin reuses the Rust core's Swift binding, the consuming app must target **iOS 18+**.
 
 ## Method channel
 
@@ -161,8 +150,7 @@ Channel name: **`unfydqry/search`**
 
 Engines are identified by an integer handle so multiple instances can coexist.
 
-Both platforms return the same `FlutterError` codes so Dart sees identical
-failures regardless of host OS:
+Both platforms return the same `FlutterError` codes so Dart sees identical failures regardless of host OS:
 
 | Code | Meaning |
 |---|---|
@@ -180,35 +168,29 @@ Each platform reaches the generated UniFFI binding (`SearchEngine`, …) directl
 | iOS (`UnfydqryPlugin.swift`) | the generated `UnifiedQuery.swift` is compiled into the same SPM target (vendored as `UnifiedQueryBinding.swift`), so `SearchEngine` is in-module |
 | Android (`UnfydqryPlugin.kt`) | `import uniffi.unfydqry.SearchEngine` (the Kotlin binding is added to the module via `sourceSets`) |
 
-If the binding API changes the plugin fails to compile — drift is caught at
-build time, not at runtime.
+If the binding API changes the plugin fails to compile — drift is caught at build time, not at runtime.
 
 ## Native-artifact packaging
 
 How the prebuilt native binaries reach a consuming app.
 
 **Current — vendor into the SPM package:**
-The iOS plugin is a self-contained Swift package (`flutter/ios/unfydqry/`). Two
-artifacts are copied in from the canonical `<repo>/ios` sources (both gitignored):
+The iOS plugin is a self-contained Swift package (`flutter/ios/unfydqry/`).
+Two artifacts are copied in from the canonical `<repo>/ios` sources (both gitignored):
 
 | Vendored into the plugin | From | Role |
 |---|---|---|
 | `UnifiedQuery.xcframework` | `<repo>/ios/UnifiedQuery.xcframework` | `binaryTarget` `unfydqryFFI` (Rust static lib) |
 | `Sources/unfydqry/UnifiedQueryBinding.swift` | `<repo>/ios/Sources/UnifiedQuery/UnifiedQuery.swift` | generated UniFFI Swift binding, compiled into the plugin module |
 
-Vendoring (rather than a `path:` dependency on the repo's `UnifiedQuery`
-package) is required because Flutter symlinks plugin Swift packages into the
-app's ephemeral build dir, and SwiftPM resolves a `path:` dependency relative to
-that symlink — so any path escaping the plugin directory fails to resolve.
+Vendoring (rather than a `path:` dependency on the repo's `UnifiedQuery` package) is required because Flutter symlinks plugin Swift packages into the app's ephemeral build dir, and SwiftPM resolves a `path:` dependency relative to that symlink — so any path escaping the plugin directory fails to resolve.
 Android mirrors this by reading the prebuilt `.so` files.
 
 Trade-off: every consumer must build the Rust core locally first.
 
 **Planned — download a release binary:**
-Once tagged releases exist, the `binaryTarget` can switch from `path:` to
-`url:`/`checksum:` so plugin consumers no longer need the Rust toolchain, with
-the Android side switching to a published Maven artifact carrying the `.so`
-files. Deferred until a release/versioning cadence is in place.
+Once tagged releases exist, the `binaryTarget` can switch from `path:` to `url:`/`checksum:` so plugin consumers no longer need the Rust toolchain, with the Android side switching to a published Maven artifact carrying the `.so` files.
+Deferred until a release/versioning cadence is in place.
 
 ## Build prerequisites
 
@@ -222,17 +204,14 @@ files. Deferred until a release/versioning cadence is in place.
 
 **iOS XCFramework**:
 
-The canonical artifact is `<repo>/ios/UnifiedQuery.xcframework` — the same one
-the native iOS binding ships. Build it with the repo's helper script, which
-compiles all four Apple targets, regenerates the Swift binding, and assembles
-the fat XCFramework (also zipping it + emitting the SwiftPM checksum):
+The canonical artifact is `<repo>/ios/UnifiedQuery.xcframework` — the same one the native iOS binding ships.
+Build it with the repo's helper script, which compiles all four Apple targets, regenerates the Swift binding, and assembles the fat XCFramework (also zipping it + emitting the SwiftPM checksum):
 
 ```sh
 bash scripts/build-xcframework.sh
 ```
 
-Then vendor the artifacts into the SPM plugin package (see "Native-artifact
-packaging" below):
+Then vendor the artifacts into the SPM plugin package (see "Native-artifact packaging" below):
 
 ```sh
 cp -R ios/UnifiedQuery.xcframework flutter/ios/unfydqry/UnifiedQuery.xcframework
