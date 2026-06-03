@@ -49,63 +49,13 @@ import uniffi.unfydqry.SearchStrategy
 import uniffi.unfydqry.normalizeWithOptions
 import uniffi.unfydqry.reindexStatusWithOptions
 
-/// Minimal multi-field record standing in for the app's "source-of-truth DB"
-/// (equivalent to a SwiftData / Room entity with several searchable columns).
-data class Record(val id: Long, val name: String, val yomi: String)
-
-// Field slots for the record-layer API. Stable, never renumbered.
-private const val SLOT_NAME = 0
-private const val SLOT_YOMI = 1
-private const val FIELD_COUNT: UInt = 2u
-
-private fun slotLabel(slot: UByte): String = when (slot.toInt()) {
-    SLOT_NAME -> "名前"
-    SLOT_YOMI -> "よみ"
-    else -> "slot $slot"
-}
-
-/// A search result row: the record plus which of its fields matched.
-data class ResultRow(val record: Record, val matchedSlots: List<UByte>)
-
-/// The `loose` preset as composable options (lowercase + kana fold).
-private fun looseOptions() = NormalizeOptions(lowercase = true, kanaFold = true)
-
-/// One normalization step toggle, bound to a field of [NormalizeOptions].
-private data class StepToggle(
-    val label: String,
-    val get: (NormalizeOptions) -> Boolean,
-    val set: (NormalizeOptions, Boolean) -> NormalizeOptions,
-)
-
-private val stepToggles = listOf(
-    StepToggle("小文字化", { it.lowercase }, { o, v -> o.copy(lowercase = v) }),
-    StepToggle("カナ→かな", { it.kanaFold }, { o, v -> o.copy(kanaFold = v) }),
-    StepToggle("アクセント除去 (café→cafe)", { it.foldDiacritics }, { o, v -> o.copy(foldDiacritics = v) }),
-    StepToggle("長音畳み込み (サーバー→サーバ)", { it.foldChoonpu }, { o, v -> o.copy(foldChoonpu = v) }),
-    StepToggle("繰り返し記号展開 (時々→時時)", { it.expandIterationMarks }, { o, v -> o.copy(expandIterationMarks = v) }),
-    StepToggle("ハイフン統一", { it.normalizeHyphens }, { o, v -> o.copy(normalizeHyphens = v) }),
-    StepToggle("桁区切り除去 (1,000→1000)", { it.stripDigitGrouping }, { o, v -> o.copy(stripDigitGrouping = v) }),
-    StepToggle("空白圧縮", { it.collapseWhitespace }, { o, v -> o.copy(collapseWhitespace = v) }),
-)
-
-private fun strategyLabel(s: SearchStrategy): String = when (s) {
-    SearchStrategy.TRIGRAM_BM25 -> "trigram + bm25"
-    SearchStrategy.SUBSTRING -> "substring"
-    SearchStrategy.PREFIX -> "prefix"
-    SearchStrategy.SUFFIX -> "suffix"
-    SearchStrategy.ALL_TERMS -> "all terms"
-    SearchStrategy.FUZZY_TRIGRAM -> "fuzzy trigram"
-    SearchStrategy.LEVENSHTEIN -> "levenshtein"
-    SearchStrategy.DAMERAU_LEVENSHTEIN -> "damerau-levenshtein"
-}
-
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val dbPath = filesDir.resolve("search_index.sqlite").absolutePath
         val engine = SearchEngine.withOptionsRebuilding(
             dbPath,
-            EngineOptionsConfig(looseOptions(), SearchStrategy.TRIGRAM_BM25),
+            EngineOptionsConfig(NormalizeOptions.loose(), SearchStrategy.TRIGRAM_BM25),
         )
         val store = seed(engine)
         setContent {
@@ -138,8 +88,8 @@ class MainActivity : ComponentActivity() {
             engine.indexRecord(
                 recordId = r.id,
                 fields = listOf(
-                    FieldValue(slot = SLOT_NAME.toUByte(), text = r.name),
-                    FieldValue(slot = SLOT_YOMI.toUByte(), text = r.yomi),
+                    FieldValue(slot = RecordSlot.NAME.slot.toUByte(), text = r.name),
+                    FieldValue(slot = RecordSlot.YOMI.slot.toUByte(), text = r.yomi),
                 ),
             )
         }
@@ -155,8 +105,8 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
     // `options` is the pending selection the toggles reflect; `applied` is what
     // the engine/index are built with. Changing options only flags whether a
     // reindex is needed (detected via reindexStatus) — it does not rebuild.
-    var options by remember { mutableStateOf(looseOptions()) }
-    var applied by remember { mutableStateOf(looseOptions()) }
+    var options by remember { mutableStateOf(NormalizeOptions.loose()) }
+    var applied by remember { mutableStateOf(NormalizeOptions.loose()) }
     var strategy by remember { mutableStateOf(SearchStrategy.TRIGRAM_BM25) }
     var needsReindex by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
@@ -176,8 +126,12 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
         }
         // Record-layer search: hits collapse to one row per record, with the
         // matched field slots. The host re-fetches records by id from `store`.
-        val hits = engine.searchRecords(query, 50u, FIELD_COUNT)
-        val rows = hits.mapNotNull { h -> store[h.recordId]?.let { ResultRow(it, h.matchedSlots) } }
+        val hits = engine.searchRecords(query, 50u, RecordSlot.fieldCount)
+        // The FFI returns matched slots as a byte buffer (ByteArray); expose them
+        // as List<UByte> so the UI can map each slot to a label.
+        val rows = hits.mapNotNull { h ->
+            store[h.recordId]?.let { ResultRow(it, h.matchedSlots.map { b -> b.toUByte() }) }
+        }
         results.clear()
         results.addAll(rows)
         // Results reflect the *applied* normalization until a reindex.
@@ -273,7 +227,7 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
                         val matched = if (row.matchedSlots.isEmpty()) {
                             ""
                         } else {
-                            "  一致: ${row.matchedSlots.joinToString(", ") { slotLabel(it) }}"
+                            "  一致: ${row.matchedSlots.joinToString(", ") { RecordSlot.labelFor(it) }}"
                         }
                         Text(
                             "id=${row.record.id}$matched",
@@ -313,7 +267,7 @@ private fun SettingsSheet(
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
         Text("正規化ステップ", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
-        stepToggles.forEach { step ->
+        StepToggle.all.forEach { step ->
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -334,11 +288,11 @@ private fun SettingsSheet(
         Text("検索アルゴリズム", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
         var expanded by remember { mutableStateOf(false) }
-        Button(onClick = { expanded = true }) { Text(strategyLabel(strategy)) }
+        Button(onClick = { expanded = true }) { Text(strategy.label) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SearchStrategy.values().forEach { s ->
                 DropdownMenuItem(
-                    text = { Text(strategyLabel(s)) },
+                    text = { Text(s.label) },
                     onClick = { expanded = false; onStrategy(s) },
                 )
             }
