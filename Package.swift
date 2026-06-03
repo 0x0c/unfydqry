@@ -34,7 +34,8 @@ import PackageDescription
 // --- BINARY-TARGET START ---
 let unfydqryBinaryTarget: Target = .binaryTarget(
     name: "unfydqryFFI",
-    path: "ios/UnifiedQuery.xcframework"
+    url: "https://github.com/0x0c/unfydqry/releases/download/0.0.5/UnifiedQuery.xcframework.zip",
+    checksum: "9c9afabca8ce2d58b53b296c7234257afdbf5bfbb2b876ce3507234b329a23a5"
 )
 // --- BINARY-TARGET END ---
 
