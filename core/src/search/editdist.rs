@@ -107,11 +107,16 @@ pub fn word_fuzzy_search(
     let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
 
     let mut hits: Vec<Hit> = Vec::new();
+    let mut wchars: Vec<char> = Vec::new();
     for row in rows {
         let (id, norm) = row?;
         let best = norm
             .split_whitespace()
-            .filter_map(|w| dist(&qchars, &w.chars().collect::<Vec<char>>(), threshold))
+            .filter_map(|w| {
+                wchars.clear();
+                wchars.extend(w.chars());
+                dist(&qchars, &wchars, threshold)
+            })
             .min();
         if let Some(best) = best {
             hits.push(Hit {
@@ -120,12 +125,7 @@ pub fn word_fuzzy_search(
             });
         }
     }
-    hits.sort_by(|a, b| {
-        a.score
-            .partial_cmp(&b.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.id.cmp(&b.id))
-    });
+    hits.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.id.cmp(&b.id)));
     hits.truncate(limit as usize);
     Ok(hits)
 }
