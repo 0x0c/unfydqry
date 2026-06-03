@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import UnifiedQuery
 
 @MainActor
@@ -137,7 +138,9 @@ final class SearchModel: ObservableObject {
                 query: query, limit: 50, fieldsPerRecord: RecordSlot.fieldCount
             )
             results = hits.compactMap { hit in
-                store[hit.recordId].map { ResultRow(record: $0, matchedSlots: hit.matchedSlots) }
+                // The FFI returns matched slots as a byte buffer (Data); expose them
+                // as [UInt8] so the UI can map each slot to a label.
+                store[hit.recordId].map { ResultRow(record: $0, matchedSlots: [UInt8](hit.matchedSlots)) }
             }
             // Results reflect the *applied* normalization until a reindex.
             let normalized = normalizeWithOptions(input: query, options: applied)

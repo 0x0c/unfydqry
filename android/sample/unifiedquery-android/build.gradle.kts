@@ -3,17 +3,25 @@
 // Maven Central. The Kotlin source is shared with the pure-JVM `:unifiedquery`
 // module (which exists for `gradle :unifiedquery:test`).
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
-import com.vanniktech.maven.publish.SonatypeHost
 
 plugins {
+    // AGP 9.0+ provides built-in Kotlin support, so the standalone
+    // org.jetbrains.kotlin.android plugin is no longer applied here.
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
     id("com.vanniktech.maven.publish")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 android {
     namespace = "com.unfydqry.unifiedquery"
-    compileSdk = 34
+    compileSdk = 36
+    // Match the NDK installed at ndk.dir (r29) so bundled native .so files are stripped.
+    ndkVersion = "29.0.14206865"
     defaultConfig {
         minSdk = 29
         consumerProguardFiles("consumer-rules.pro")
@@ -23,12 +31,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 
-    sourceSets["main"].kotlin.srcDir("../unifiedquery/src/main/kotlin")
-    // cargo-ndk writes libunfydqry.so/<ABI>/libunfydqry.so under android/jniLibs/.
-    // From this module: android/sample/unifiedquery-android/ → ../../jniLibs.
-    sourceSets["main"].jniLibs.srcDir("../../jniLibs")
+    // AGP 9 (built-in Kotlin) source-set DSL: configure "main" via sourceSets { named(...) }.
+    sourceSets {
+        named("main") {
+            kotlin.srcDir("../unifiedquery/src/main/kotlin")
+            // cargo-ndk writes libunfydqry.so/<ABI>/libunfydqry.so under android/jniLibs/.
+            // From this module: android/sample/unifiedquery-android/ → ../../jniLibs.
+            jniLibs.srcDir("../../jniLibs")
+        }
+    }
 }
 
 dependencies {
@@ -39,7 +51,9 @@ dependencies {
 }
 
 mavenPublishing {
-    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
+    // vanniktech 0.30+ publishes to the Central Portal by default; the SonatypeHost
+    // argument was removed, so only automaticRelease is passed now.
+    publishToMavenCentral(automaticRelease = true)
     signAllPublications()
 
     configure(AndroidSingleVariantLibrary(variant = "release", sourcesJar = true, publishJavadocJar = false))

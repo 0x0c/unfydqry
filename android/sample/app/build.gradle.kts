@@ -1,17 +1,21 @@
 plugins {
+    // AGP 9.0+ provides built-in Kotlin support, so the standalone
+    // org.jetbrains.kotlin.android plugin is no longer applied here.
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.unfydqry.searchsample"
-    compileSdk = 34
+    compileSdk = 36
+    // Match the NDK installed at ndk.dir (r29) so native .so files are stripped
+    // instead of being packaged unstripped (AGP's default ndkVersion differs).
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "com.unfydqry.searchsample"
         minSdk = 29
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1"
     }
@@ -22,11 +26,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
 
-    kotlinOptions { jvmTarget = "17" }
-
-    packaging {
-        // .so files are picked up from jniLibs.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -35,8 +39,8 @@ dependencies {
     // Symmetric to depending on the SwiftPM library target (UnifiedQuery) on iOS.
     implementation(project(":unifiedquery"))
 
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation(platform("androidx.compose:compose-bom:2026.05.01"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
