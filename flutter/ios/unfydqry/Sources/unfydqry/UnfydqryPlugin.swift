@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
-import UnifiedQuery
+// The generated UniFFI binding (SearchEngine, NormalizeOptions, …) is compiled
+// into this same module from UnifiedQueryBinding.swift, so no import is needed.
 
 /// iOS side of the Flutter plugin.
 ///
