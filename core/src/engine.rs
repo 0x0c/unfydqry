@@ -557,13 +557,14 @@ impl SearchEngine {
     /// Returns the normalized text of the document at `id` with matching
     /// regions of `query` wrapped in `before`/`after` markers.
     ///
-    /// Returns `None` if the document does not exist or if the normalized query
-    /// is empty.  When the document exists but the query does not match, the
-    /// normalized text is returned without markers.
+    /// Returns `nil` / `null` if the document does not exist or if the
+    /// normalized query is empty.  When the document exists but the query does
+    /// not match, the normalized text is returned without markers.
     ///
-    /// For `trigram_bm25`, this uses FTS5's built-in `highlight()` function.
-    /// For all other strategies, matching regions are found by scanning the
-    /// normalized text in Rust.
+    /// For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+    /// built-in `highlight()` function.  For shorter queries or any other
+    /// strategy, matching regions are found by scanning the normalized text
+    /// in Rust.
     ///
     /// **Note:** The returned text is the *normalized* form, not the original
     /// raw text the host indexed.

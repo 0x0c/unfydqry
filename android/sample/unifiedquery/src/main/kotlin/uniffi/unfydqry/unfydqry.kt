@@ -871,7 +871,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 47396.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 25168.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
@@ -1408,13 +1408,14 @@ public interface SearchEngineInterface {
      * Returns the normalized text of the document at `id` with matching
      * regions of `query` wrapped in `before`/`after` markers.
      *
-     * Returns `None` if the document does not exist or if the normalized query
-     * is empty.  When the document exists but the query does not match, the
-     * normalized text is returned without markers.
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
      *
-     * For `trigram_bm25`, this uses FTS5's built-in `highlight()` function.
-     * For all other strategies, matching regions are found by scanning the
-     * normalized text in Rust.
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
      *
      * **Note:** The returned text is the *normalized* form, not the original
      * raw text the host indexed.
@@ -1639,13 +1640,14 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
      * Returns the normalized text of the document at `id` with matching
      * regions of `query` wrapped in `before`/`after` markers.
      *
-     * Returns `None` if the document does not exist or if the normalized query
-     * is empty.  When the document exists but the query does not match, the
-     * normalized text is returned without markers.
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
      *
-     * For `trigram_bm25`, this uses FTS5's built-in `highlight()` function.
-     * For all other strategies, matching regions are found by scanning the
-     * normalized text in Rust.
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
      *
      * **Note:** The returned text is the *normalized* form, not the original
      * raw text the host indexed.
