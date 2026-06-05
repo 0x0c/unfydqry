@@ -580,34 +580,34 @@ impl SearchEngine {
             return Ok(None);
         }
 
-        // Fetch data under the lock, then release before doing Rust-side work.
-        let conn = self.conn.lock().unwrap();
+        // Fetch all needed data under the lock, then release it before doing
+        // Rust-side string work.
+        let fetched = {
+            let conn = self.conn.lock().unwrap();
 
-        if self.strategy_kind == SearchStrategy::TrigramBm25 && q.chars().nth(2).is_some() {
-            // Use FTS5 highlight() for trigram_bm25 with 3+ char queries.
-            let phrase = format!("\"{}\"", q.replace('"', "\"\""));
-            let result: Option<String> = conn
-                .query_row(
-                    "SELECT highlight(docs, 0, ?2, ?3) FROM docs WHERE rowid = ?1 AND docs MATCH ?4",
-                    params![id, &before, &after, &phrase],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if result.is_some() {
-                return Ok(result);
+            if self.strategy_kind == SearchStrategy::TrigramBm25 && q.chars().nth(2).is_some() {
+                let phrase = format!("\"{}\"", q.replace('"', "\"\""));
+                let result: Option<String> = conn
+                    .query_row(
+                        "SELECT highlight(docs, 0, ?2, ?3) FROM docs WHERE rowid = ?1 AND docs MATCH ?4",
+                        params![id, &before, &after, &phrase],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if result.is_some() {
+                    return Ok(result);
+                }
+                // FTS5 MATCH returned no row — the doc may exist but the query
+                // didn't match. Fall through to return the plain normalized text.
             }
-            // FTS5 MATCH returned no row — the doc may exist but the query
-            // didn't match. Fall through to return the plain normalized text.
-        }
 
-        let norm: Option<String> = conn
-            .query_row("SELECT norm FROM entries WHERE id = ?1", params![id], |r| {
-                r.get(0)
+            conn.query_row("SELECT norm FROM entries WHERE id = ?1", params![id], |r| {
+                r.get::<_, String>(0)
             })
-            .optional()?;
-        drop(conn); // Release the lock before Rust-side string work.
+            .optional()?
+        }; // conn is released here
 
-        let Some(norm) = norm else {
+        let Some(norm) = fetched else {
             return Ok(None);
         };
 
@@ -828,23 +828,29 @@ impl SearchEngine {
 }
 
 /// Wraps every non-overlapping occurrence of `needle` in `haystack` with
-/// `before`/`after` markers. Returns `haystack` unchanged if `needle` is not
-/// found.
+/// `before`/`after` markers.  Returns a `String` equal to `haystack` when
+/// `needle` is not found.
 fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str) -> String {
     if needle.is_empty() {
         return haystack.to_string();
     }
-    let mut out = String::with_capacity(haystack.len() + before.len() + after.len());
-    let mut start = 0;
-    while let Some(pos) = haystack[start..].find(needle) {
-        let abs = start + pos;
-        out.push_str(&haystack[start..abs]);
-        out.push_str(before);
-        out.push_str(&haystack[abs..abs + needle.len()]);
-        out.push_str(after);
-        start = abs + needle.len();
+
+    let matches: Vec<(usize, &str)> = haystack.match_indices(needle).collect();
+    if matches.is_empty() {
+        return haystack.to_string();
     }
-    out.push_str(&haystack[start..]);
+
+    let extra = matches.len() * (before.len() + after.len());
+    let mut out = String::with_capacity(haystack.len() + extra);
+    let mut prev_end = 0;
+    for (pos, matched) in matches {
+        out.push_str(&haystack[prev_end..pos]);
+        out.push_str(before);
+        out.push_str(matched);
+        out.push_str(after);
+        prev_end = pos + matched.len();
+    }
+    out.push_str(&haystack[prev_end..]);
     out
 }
 
