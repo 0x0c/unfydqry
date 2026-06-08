@@ -26,6 +26,11 @@ final class SearchModel: ObservableObject {
     @Published var needsReindex: Bool = false
 
     private var engine: SearchEngine
+    /// The engine packs `(record_id, slot)` into the document id it stores (and
+    /// highlights) under. The sample opens with the default config, so the
+    /// number of low bits reserved for the slot is the library default (8); the
+    /// packed id is `record_id << fieldBits | slot`.
+    private static let fieldBits: Int64 = 8
     /// The normalization the engine and on-disk index are currently built with.
     private var applied: NormalizeOptions = .loose
     private let dbPath: String
@@ -129,7 +134,7 @@ final class SearchModel: ObservableObject {
             // Empty query → show every indexed record (sorted by id for stability).
             results = store.values
                 .sorted { $0.id < $1.id }
-                .map { ResultRow(record: $0, matchedSlots: []) }
+                .map { ResultRow(record: $0, matchedSlots: [], highlights: [:]) }
             status = "全件表示 (\(results.count))"
             return
         }
@@ -138,9 +143,15 @@ final class SearchModel: ObservableObject {
                 query: query, limit: 50, fieldsPerRecord: RecordSlot.fieldCount
             )
             results = hits.compactMap { hit in
+                guard let record = store[hit.recordId] else { return nil }
                 // The FFI returns matched slots as a byte buffer (Data); expose them
                 // as [UInt8] so the UI can map each slot to a label.
-                store[hit.recordId].map { ResultRow(record: $0, matchedSlots: [UInt8](hit.matchedSlots)) }
+                let slots = [UInt8](hit.matchedSlots)
+                return ResultRow(
+                    record: record,
+                    matchedSlots: slots,
+                    highlights: highlights(recordId: hit.recordId, slots: slots)
+                )
             }
             // Results reflect the *applied* normalization until a reindex.
             let normalized = normalizeWithOptions(input: query, options: applied)
@@ -149,6 +160,24 @@ final class SearchModel: ObservableObject {
             status = "error: \(error)"
             results = []
         }
+    }
+
+    /// Asks the engine to highlight the current `query` within each matched
+    /// field of `recordId`, keyed by slot. Slots whose normalized field does not
+    /// actually contain a marked match are dropped, so the UI falls back to the
+    /// raw text for them rather than showing a marker-free normalized string.
+    private func highlights(recordId: Int64, slots: [UInt8]) -> [UInt8: String] {
+        var result: [UInt8: String] = [:]
+        for slot in slots {
+            let id = (recordId << Self.fieldBits) | Int64(slot)
+            let marked = (try? engine.highlight(
+                query: query, id: id, before: Highlight.open, after: Highlight.close
+            )) ?? nil
+            if let marked, marked.contains(Highlight.open) {
+                result[slot] = marked
+            }
+        }
+        return result
     }
 
     /// UI-test hooks: preselect steps/strategy and/or a query on launch.

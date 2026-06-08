@@ -610,6 +610,24 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
     
     /**
+     * Returns the normalized text of the document at `id` with matching
+     * regions of `query` wrapped in `before`/`after` markers.
+     *
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
+     *
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
+     *
+     * **Note:** The returned text is the *normalized* form, not the original
+     * raw text the host indexed.
+     */
+    func highlight(query: String, id: Int64, before: String, after: String) throws  -> String?
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -834,6 +852,34 @@ open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
     uniffi_unfydqry_fn_method_searchengine_change_field_bits(
             self.uniffiCloneHandle(),
         FfiConverterUInt8.lower(newFieldBits),$0
+    )
+})
+}
+    
+    /**
+     * Returns the normalized text of the document at `id` with matching
+     * regions of `query` wrapped in `before`/`after` markers.
+     *
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
+     *
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
+     *
+     * **Note:** The returned text is the *normalized* form, not the original
+     * raw text the host indexed.
+     */
+open func highlight(query: String, id: Int64, before: String, after: String)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_highlight(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterInt64.lower(id),
+        FfiConverterString.lower(before),
+        FfiConverterString.lower(after),$0
     )
 })
 }
@@ -1999,6 +2045,30 @@ fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFieldValue: FfiConverterRustBuffer {
     typealias SwiftType = [FieldValue]
 
@@ -2166,6 +2236,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_highlight() != 25168) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {

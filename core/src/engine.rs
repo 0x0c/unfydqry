@@ -153,6 +153,7 @@ pub struct SearchEngine {
     conn: Mutex<Connection>,
     normalizer: Box<dyn Normalizer>,
     strategy: Box<dyn SearchAlgorithm>,
+    strategy_kind: SearchStrategy,
     options: NormalizeOptions,
     /// Low bits of each packed id reserved for the field slot in the
     /// record-layer API. Resolved at open; mutated only by `change_field_bits`,
@@ -320,6 +321,7 @@ impl SearchEngine {
             conn: Mutex::new(conn),
             normalizer: build_normalizer_options(options),
             strategy: build_strategy(strategy),
+            strategy_kind: strategy,
             options,
             field_bits: AtomicU8::new(field_bits),
         })
@@ -552,6 +554,66 @@ impl SearchEngine {
         self.strategy.search(&conn, &q, limit)
     }
 
+    /// Returns the normalized text of the document at `id` with matching
+    /// regions of `query` wrapped in `before`/`after` markers.
+    ///
+    /// Returns `nil` / `null` if the document does not exist or if the
+    /// normalized query is empty.  When the document exists but the query does
+    /// not match, the normalized text is returned without markers.
+    ///
+    /// For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+    /// built-in `highlight()` function.  For shorter queries or any other
+    /// strategy, matching regions are found by scanning the normalized text
+    /// in Rust.
+    ///
+    /// **Note:** The returned text is the *normalized* form, not the original
+    /// raw text the host indexed.
+    pub fn highlight(
+        &self,
+        query: String,
+        id: i64,
+        before: String,
+        after: String,
+    ) -> Result<Option<String>, SearchError> {
+        let q = self.normalizer.normalize(&query);
+        if q.is_empty() {
+            return Ok(None);
+        }
+
+        // Fetch all needed data under the lock, then release it before doing
+        // Rust-side string work.
+        let fetched = {
+            let conn = self.conn.lock().unwrap();
+
+            if self.strategy_kind == SearchStrategy::TrigramBm25 && q.chars().nth(2).is_some() {
+                let phrase = format!("\"{}\"", q.replace('"', "\"\""));
+                let result: Option<String> = conn
+                    .query_row(
+                        "SELECT highlight(docs, 0, ?2, ?3) FROM docs WHERE rowid = ?1 AND docs MATCH ?4",
+                        params![id, &before, &after, &phrase],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if result.is_some() {
+                    return Ok(result);
+                }
+                // FTS5 MATCH returned no row — the doc may exist but the query
+                // didn't match. Fall through to return the plain normalized text.
+            }
+
+            conn.query_row("SELECT norm FROM entries WHERE id = ?1", params![id], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
+        }; // conn is released here
+
+        let Some(norm) = fetched else {
+            return Ok(None);
+        };
+
+        Ok(Some(highlight_occurrences(&norm, &q, &before, &after)))
+    }
+
     /// Adds, or replaces, the whole record `record_id`, made of multiple
     /// fields.
     ///
@@ -763,6 +825,33 @@ impl SearchEngine {
         self.field_bits.store(new_field_bits, Ordering::Relaxed);
         Ok(repacked.len() as u64)
     }
+}
+
+/// Wraps every non-overlapping occurrence of `needle` in `haystack` with
+/// `before`/`after` markers.  Returns a `String` equal to `haystack` when
+/// `needle` is not found.
+fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+
+    let matches: Vec<(usize, &str)> = haystack.match_indices(needle).collect();
+    if matches.is_empty() {
+        return haystack.to_string();
+    }
+
+    let extra = matches.len() * (before.len() + after.len());
+    let mut out = String::with_capacity(haystack.len() + extra);
+    let mut prev_end = 0;
+    for (pos, matched) in matches {
+        out.push_str(&haystack[prev_end..pos]);
+        out.push_str(before);
+        out.push_str(matched);
+        out.push_str(after);
+        prev_end = pos + matched.len();
+    }
+    out.push_str(&haystack[prev_end..]);
+    out
 }
 
 #[cfg(test)]
@@ -1434,6 +1523,101 @@ mod tests {
         assert_eq!(e.field_bits(), 10);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    // --- highlight ---
+
+    #[test]
+    fn highlight_trigram_bm25_wraps_match() {
+        let e = engine_with(SearchStrategy::TrigramBm25);
+        e.index(1, "東京都の情報検索プログラム".into()).unwrap();
+
+        let result = e
+            .highlight("情報検索".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        assert!(result.is_some());
+        let hl = result.unwrap();
+        assert!(hl.contains("[情報検索]"), "expected [情報検索] in '{hl}'");
+    }
+
+    #[test]
+    fn highlight_substring_wraps_match() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "hello world".into()).unwrap();
+
+        let result = e
+            .highlight("world".into(), 1, "<b>".into(), "</b>".into())
+            .unwrap();
+        assert_eq!(result, Some("hello <b>world</b>".into()));
+    }
+
+    #[test]
+    fn highlight_prefix_wraps_match() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "とうきょう".into()).unwrap();
+
+        let result = e
+            .highlight("とう".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        assert_eq!(result, Some("[とう]きょう".into()));
+    }
+
+    #[test]
+    fn highlight_nonexistent_id_returns_none() {
+        let e = fresh();
+        let result = e
+            .highlight("test".into(), 999, "[".into(), "]".into())
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn highlight_empty_query_returns_none() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+
+        let result = e.highlight("".into(), 1, "[".into(), "]".into()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn highlight_no_match_returns_plain_text() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "hello world".into()).unwrap();
+
+        let result = e
+            .highlight("xyz".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        // Doc exists but query doesn't match — return the normalized text as-is.
+        assert_eq!(result, Some("hello world".into()));
+    }
+
+    #[test]
+    fn highlight_multiple_occurrences() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "abcabc".into()).unwrap();
+
+        let result = e
+            .highlight("abc".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        assert_eq!(result, Some("[abc][abc]".into()));
+    }
+
+    #[test]
+    fn highlight_trigram_bm25_no_match_returns_plain_text() {
+        let e = engine_with(SearchStrategy::TrigramBm25);
+        e.index(1, "東京都の情報検索プログラム".into()).unwrap();
+
+        // Query exists in the index but does not match this document.
+        let result = e
+            .highlight("zzzzzzz".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        // Doc exists, so we get Some with the plain normalized text (no markers).
+        assert!(result.is_some());
+        assert!(
+            !result.as_ref().unwrap().contains('['),
+            "no markers expected when query doesn't match"
+        );
     }
 
     #[test]

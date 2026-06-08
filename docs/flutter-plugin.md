@@ -145,6 +145,7 @@ Channel name: **`unfydqry/search`**
 | `indexRecord` | `handle: int, recordId: int, fields: List<Map>` (each `{slot: int, text: String}`) | — |
 | `removeRecord` | `handle: int, recordId: int` | — |
 | `searchRecords` | `handle: int, query: String, limit: int, fieldsPerRecord: int` | `List<Map<String, dynamic>>` (each `{recordId, score, matchedSlots}`) |
+| `highlight` | `handle: int, query: String, id: int, before: String, after: String` | `String?` (normalized text with matches wrapped, or null) |
 | `changeFieldBits` | `handle: int, newFieldBits: int` | `int` (records repacked) |
 | `dispose` | `handle: int` | — |
 

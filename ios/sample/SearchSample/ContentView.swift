@@ -11,10 +11,22 @@ struct ContentView: View {
         NavigationStack {
             List(model.results) { row in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.record.name).font(.body)
-                    Text("よみ: \(row.record.yomi)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Matched fields show the engine's highlighted (normalized)
+                    // text; unmatched fields fall back to the raw record text.
+                    if let marked = row.highlights[RecordSlot.name.rawValue] {
+                        Text(Highlight.attributed(marked)).font(.body)
+                    } else {
+                        Text(row.record.name).font(.body)
+                    }
+                    if let marked = row.highlights[RecordSlot.yomi.rawValue] {
+                        (Text("よみ: ") + Text(Highlight.attributed(marked)))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("よみ: \(row.record.yomi)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 8) {
                         Text("id=\(row.record.id)")
                             .monospacedDigit()

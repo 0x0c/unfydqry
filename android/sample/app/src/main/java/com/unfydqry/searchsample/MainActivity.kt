@@ -97,6 +97,35 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// The engine packs (recordId, slot) into the document id it stores (and
+// highlights) under. The sample opens with the default config, so the number of
+// low bits reserved for the slot is the library default (8); the packed id is
+// `recordId shl FIELD_BITS or slot`.
+private const val FIELD_BITS = 8
+
+/// Asks the engine to highlight [query] within each matched field of [recordId],
+/// keyed by slot. Slots whose normalized field does not actually contain a
+/// marked match are dropped, so the UI falls back to the raw text for them.
+private fun highlightsFor(
+    engine: SearchEngine,
+    query: String,
+    recordId: Long,
+    matchedSlots: ByteArray,
+): Map<Int, String> {
+    val out = mutableMapOf<Int, String>()
+    for (b in matchedSlots) {
+        val slot = b.toUByte()
+        val id = (recordId shl FIELD_BITS) or slot.toLong()
+        val marked = runCatching {
+            engine.highlight(query, id, Highlight.OPEN, Highlight.CLOSE)
+        }.getOrNull()
+        if (marked != null && marked.contains(Highlight.OPEN)) {
+            out[slot.toInt()] = marked
+        }
+    }
+    return out
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: String) {
@@ -130,7 +159,13 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
         // The FFI returns matched slots as a byte buffer (ByteArray); expose them
         // as List<UByte> so the UI can map each slot to a label.
         val rows = hits.mapNotNull { h ->
-            store[h.recordId]?.let { ResultRow(it, h.matchedSlots.map { b -> b.toUByte() }) }
+            store[h.recordId]?.let {
+                ResultRow(
+                    it,
+                    h.matchedSlots.map { b -> b.toUByte() },
+                    highlightsFor(engine, query, h.recordId, h.matchedSlots),
+                )
+            }
         }
         results.clear()
         results.addAll(rows)
@@ -218,12 +253,28 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(results, key = { it.record.id }) { row ->
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text(row.record.name, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "よみ: ${row.record.yomi}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        // Matched fields show the engine's highlighted (normalized)
+                        // text; unmatched fields fall back to the raw record text.
+                        val nameHl = row.highlights[RecordSlot.NAME.slot]
+                        if (nameHl != null) {
+                            Text(Highlight.annotated(nameHl), style = MaterialTheme.typography.bodyLarge)
+                        } else {
+                            Text(row.record.name, style = MaterialTheme.typography.bodyLarge)
+                        }
+                        val yomiHl = row.highlights[RecordSlot.YOMI.slot]
+                        if (yomiHl != null) {
+                            Text(
+                                Highlight.annotated(yomiHl, prefix = "よみ: "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                "よみ: ${row.record.yomi}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         val matched = if (row.matchedSlots.isEmpty()) {
                             ""
                         } else {

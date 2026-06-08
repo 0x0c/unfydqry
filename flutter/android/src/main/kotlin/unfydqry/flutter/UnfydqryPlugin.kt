@@ -173,6 +173,18 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
                     )
                 }
 
+                "highlight" -> {
+                    val query = call.argument<String>("query")
+                        ?: return result.badArgs("query:String required")
+                    val id = call.longArg("id") ?: return result.badArgs("id:Int required")
+                    val before = call.argument<String>("before")
+                        ?: return result.badArgs("before:String required")
+                    val after = call.argument<String>("after")
+                        ?: return result.badArgs("after:String required")
+                    val engine = engine(call, result) ?: return
+                    result.success(engine.highlight(query = query, id = id, before = before, after = after))
+                }
+
                 "changeFieldBits" -> {
                     val newFieldBits = call.argument<Int>("newFieldBits")
                         ?: return result.badArgs("newFieldBits:Int required")

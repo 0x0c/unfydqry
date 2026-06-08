@@ -131,6 +131,14 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
                     ["recordId": $0.recordId, "score": $0.score, "matchedSlots": $0.matchedSlots.map { Int($0) }]
                 })
 
+            case "highlight":
+                guard let query = args["query"] as? String else { return result(badArgs("query:String required")) }
+                guard let id = int64(args["id"]) else { return result(badArgs("id:Int required")) }
+                guard let before = args["before"] as? String else { return result(badArgs("before:String required")) }
+                guard let after = args["after"] as? String else { return result(badArgs("after:String required")) }
+                guard let engine = requireEngine(args, result: result) else { return }
+                result(try engine.highlight(query: query, id: id, before: before, after: after))
+
             case "changeFieldBits":
                 guard let newFieldBits = (args["newFieldBits"] as? NSNumber)?.uint8Value else {
                     return result(badArgs("newFieldBits:Int required"))

@@ -648,6 +648,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_change_field_bits(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_highlight(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index_record(
@@ -706,6 +708,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_change_field_bits(`ptr`: Long,`newFieldBits`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_unfydqry_fn_method_searchengine_highlight(`ptr`: Long,`query`: RustBuffer.ByValue,`id`: Long,`before`: RustBuffer.ByValue,`after`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Long,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_index_record(`ptr`: Long,`recordId`: Long,`fields`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -865,6 +869,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 25168.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
@@ -1398,6 +1405,24 @@ public interface SearchEngineInterface {
     fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong
     
     /**
+     * Returns the normalized text of the document at `id` with matching
+     * regions of `query` wrapped in `before`/`after` markers.
+     *
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
+     *
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
+     *
+     * **Note:** The returned text is the *normalized* form, not the original
+     * raw text the host indexed.
+     */
+    fun `highlight`(`query`: kotlin.String, `id`: kotlin.Long, `before`: kotlin.String, `after`: kotlin.String): kotlin.String?
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1604,6 +1629,36 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_change_field_bits(
         it,
         FfiConverterUByte.lower(`newFieldBits`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns the normalized text of the document at `id` with matching
+     * regions of `query` wrapped in `before`/`after` markers.
+     *
+     * Returns `nil` / `null` if the document does not exist or if the
+     * normalized query is empty.  When the document exists but the query does
+     * not match, the normalized text is returned without markers.
+     *
+     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
+     * built-in `highlight()` function.  For shorter queries or any other
+     * strategy, matching regions are found by scanning the normalized text
+     * in Rust.
+     *
+     * **Note:** The returned text is the *normalized* form, not the original
+     * raw text the host indexed.
+     */
+    @Throws(SearchException::class)override fun `highlight`(`query`: kotlin.String, `id`: kotlin.Long, `before`: kotlin.String, `after`: kotlin.String): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_highlight(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterLong.lower(`id`),FfiConverterString.lower(`before`),FfiConverterString.lower(`after`),_status)
 }
     }
     )
@@ -2583,6 +2638,38 @@ public object FfiConverterOptionalUByte: FfiConverterRustBuffer<kotlin.UByte?> {
         } else {
             buf.put(1)
             FfiConverterUByte.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
+    override fun read(buf: ByteBuffer): kotlin.String? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterString.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.String?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterString.write(value, buf)
         }
     }
 }

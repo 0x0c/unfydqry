@@ -187,23 +187,45 @@ Every algorithm runs against the already-normalized text and returns `(id, score
 |---|---|---|---|---|
 | `trigram_bm25` (default) | the whole query as a phrase, anywhere in the text | FTS5 trigram index + `bm25()` | bm25 relevance (lower = more relevant) | General-purpose **ranked** full-text search. |
 | `substring` | the query anywhere in the text | `LIKE '%q%'` | `0.0` (unranked) | "Contains" matching where short (1–2 char) queries must also hit and ranking doesn't matter. |
-| `prefix` | text that **starts with** the query | `LIKE 'q%'` | `0.0` (unranked) | Type-ahead / autocomplete suggestions. |
+| `prefix` | text that **starts with** the query | B-tree index range scan | `0.0` (unranked) | Type-ahead / autocomplete suggestions. |
 | `suffix` | text that **ends with** the query | `LIKE '%q'` | `0.0` (unranked) | "Ends-with" matching (e.g. file extensions, honorific suffixes). |
 | `all_terms` | docs containing **every** whitespace-separated term, in any order | `LIKE '%t%'` AND-ed per term | `0.0` (unranked) | Multi-word queries where word order is irrelevant (unlike `substring`, which needs the literal run including spaces). |
-| `fuzzy_trigram` | docs whose character-trigram set is similar enough to the query (Jaccard ≥ threshold) | trigram set similarity, computed in Rust | `1 − similarity` (lower = more similar; exact = `0.0`) | Typo tolerance without a full edit-distance scan. |
+| `fuzzy_trigram` | docs whose character-trigram set is similar enough to the query (Jaccard ≥ threshold) | FTS5 pre-filter + Jaccard in Rust | `1 − similarity` (lower = more similar; exact = `0.0`) | Typo tolerance without a full edit-distance scan. |
 | `levenshtein` | docs with a word within an edit-distance threshold of the query | min Levenshtein distance to any word, in Rust | edit distance (lower = better) | Typo-tolerant matching of a single word/term. |
 | `damerau_levenshtein` | same as `levenshtein`, but an adjacent transposition counts as one edit | min OSA distance to any word, in Rust | edit distance (lower = better) | Typo tolerance that also forgives swapped neighbouring characters (`tokoy` ↔ `tokyo`). |
 
 Notes:
 - **Ranked** strategies are `trigram_bm25` (by bm25), `fuzzy_trigram` (by similarity), and `levenshtein` / `damerau_levenshtein` (by distance). `substring`, `prefix`, `suffix`, and `all_terms` are unranked (constant `0.0`, storage order) — use `limit` to cap results.
 - `trigram_bm25` cannot match queries shorter than 3 characters, so those automatically fall back to a substring `LIKE` (score `0.0`).
-- The fuzzy strategies need no extra index, crate, or SQLite extension: trigram sets and edit distances are computed in Rust over the normalized text (per Unicode codepoint, so Japanese compares correctly). The edit-distance threshold scales with query length (1 edit per 4 characters, minimum 1).
+- The fuzzy strategies need no extra crate or SQLite extension. `fuzzy_trigram` uses the existing FTS5 trigram index to narrow candidates before computing Jaccard similarity in Rust; edit distances are computed in Rust over the normalized text (per Unicode codepoint, so Japanese compares correctly) with early termination when the distance exceeds the threshold. The edit-distance threshold scales with query length (1 edit per 4 characters, minimum 1).
 
 ### Selecting a combination
 
 The combination is chosen on the binding side — see the per-language calls in the [iOS](docs/ios.md#selecting-a-combination), [Android](docs/android.md#selecting-a-combination), and [Flutter](docs/flutter-plugin.md) guides.
 
 To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile), `normalizeWithProfile(input, profile)`, and `normalizeWithOptions(input, options)` for a composable step set.
+
+### Highlighting matched regions
+
+`highlight(query, id, before, after)` returns the *normalized* text of a document with matching regions wrapped in caller-specified markers:
+
+```swift
+// iOS
+let snippet = try engine.highlight(query: "検索", id: 1, before: "<b>", after: "</b>")
+// → Optional("情報<b>検索</b>プログラム")
+```
+
+```kotlin
+// Android
+val snippet = engine.highlight("検索", 1L, "<b>", "</b>")
+// → "情報<b>検索</b>プログラム"
+```
+
+Returns `nil` / `null` if the document does not exist or if the normalized query is empty. When the document exists but the query does not match, the normalized text is returned without markers.
+
+For `trigram_bm25` with queries of 3+ characters, highlighting uses FTS5's built-in `highlight()` function. For shorter queries or any other strategy, matching regions are found by scanning the normalized text in Rust.
+
+> **Note:** The returned text is the *normalized* form, not the original raw text the host indexed.
 
 ## Multi-field records (record-layer API)
 

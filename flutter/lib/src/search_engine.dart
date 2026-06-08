@@ -197,6 +197,31 @@ class SearchEngine {
     }
   }
 
+  /// Returns the normalized text of the document [id] with regions matching
+  /// [query] wrapped in [before]/[after] markers.
+  ///
+  /// Returns null when the document does not exist or [query] is empty once
+  /// normalized; returns the plain normalized text when the query does not
+  /// match. The returned text is the *normalized* form, not the raw text.
+  ///
+  /// Records are stored under a packed id; to highlight a record field, pass
+  /// `recordId << fieldBits | slot` (the host's `fieldBits`, default 8).
+  Future<String?> highlight(
+    int id,
+    String query, {
+    required String before,
+    required String after,
+  }) {
+    _checkAlive();
+    return _channel.invokeMethod<String>('highlight', {
+      'handle': _handle,
+      'id': id,
+      'query': query,
+      'before': before,
+      'after': after,
+    });
+  }
+
   /// Re-packs the index from its current `fieldBits` to [newFieldBits],
   /// rebuilding the id encoding in place. Returns the number of documents
   /// repacked. Throws if a stored slot or record id would not fit.

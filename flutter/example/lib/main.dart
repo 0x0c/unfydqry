@@ -83,7 +83,60 @@ const _stepToggles = <StepToggle>[
 ];
 
 /// A search result row: the record plus which of its fields matched.
-typedef ResultRow = ({SeedRecord record, List<int> matchedSlots});
+///
+/// [highlights] holds the marked normalized text per matched slot, as produced
+/// by the engine's `highlight` (matches wrapped in [_hlOpen]/[_hlClose]).
+/// A slot is present only when the query actually matched its field.
+typedef ResultRow = ({
+  SeedRecord record,
+  List<int> matchedSlots,
+  Map<int, String> highlights,
+});
+
+/// The engine packs (recordId, slot) into the document id it highlights under.
+/// The sample opens with the default config, so fieldBits is the library
+/// default (8); the packed id is `recordId << fieldBits | slot`.
+const _fieldBits = 8;
+
+/// Sentinel markers wrapped around matched regions by the engine's `highlight`,
+/// chosen from C0 control characters so they never collide with real content.
+const _hlOpen = '\u0002'; // STX
+const _hlClose = '\u0003'; // ETX
+
+const _matchStyle = TextStyle(
+  backgroundColor: Color(0x80FFEB3B), // translucent yellow
+  fontWeight: FontWeight.bold,
+);
+
+/// Builds a [TextSpan] tree from text marked with [_hlOpen]/[_hlClose],
+/// emphasizing the matched spans. An optional [prefix] (e.g. "よみ: ") is
+/// prepended unstyled, and [base] applies to the whole span.
+TextSpan _highlightedSpan(String marked, {String prefix = '', TextStyle? base}) {
+  final children = <TextSpan>[];
+  if (prefix.isNotEmpty) children.add(TextSpan(text: prefix));
+  final buf = StringBuffer();
+  var inMatch = false;
+  void flush() {
+    if (buf.isEmpty) return;
+    children.add(TextSpan(text: buf.toString(), style: inMatch ? _matchStyle : null));
+    buf.clear();
+  }
+
+  for (final rune in marked.runes) {
+    switch (rune) {
+      case 0x02:
+        flush();
+        inMatch = true;
+      case 0x03:
+        flush();
+        inMatch = false;
+      default:
+        buf.writeCharCode(rune);
+    }
+  }
+  flush();
+  return TextSpan(style: base, children: children);
+}
 
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key});
@@ -113,7 +166,11 @@ class _SearchPageState extends State<SearchPage> {
   // All records as rows, used when the query is empty.
   List<ResultRow> get _allRows =>
       (_seed.toList()..sort((a, b) => a.id.compareTo(b.id)))
-          .map((r) => (record: r, matchedSlots: const <int>[]))
+          .map((r) => (
+                record: r,
+                matchedSlots: const <int>[],
+                highlights: const <int, String>{},
+              ))
           .toList();
 
   @override
@@ -165,10 +222,16 @@ class _SearchPageState extends State<SearchPage> {
     // Record-layer search: hits collapse to one row per record, with the
     // matched field slots. The host re-fetches records by id from the seed.
     final hits = await engine.searchRecords(query, fieldsPerRecord: _fieldCount);
-    final rows = hits
-        .where((h) => _byId.containsKey(h.recordId))
-        .map((h) => (record: _byId[h.recordId]!, matchedSlots: h.matchedSlots))
-        .toList();
+    final rows = <ResultRow>[];
+    for (final h in hits) {
+      final record = _byId[h.recordId];
+      if (record == null) continue;
+      rows.add((
+        record: record,
+        matchedSlots: h.matchedSlots,
+        highlights: await _highlightsFor(engine, query, h.recordId, h.matchedSlots),
+      ));
+    }
     // Results reflect the *applied* normalization until a reindex.
     final normalized = await SearchEngine.normalize(query, options: _applied);
     if (!mounted) return;
@@ -176,6 +239,26 @@ class _SearchPageState extends State<SearchPage> {
       _results = rows;
       _status = 'hits: ${rows.length}  normalized="$normalized"';
     });
+  }
+
+  /// Asks the engine to highlight [query] within each matched field of
+  /// [recordId], keyed by slot. Slots whose normalized field does not actually
+  /// contain a marked match are dropped, so the UI falls back to the raw text.
+  Future<Map<int, String>> _highlightsFor(
+    SearchEngine engine,
+    String query,
+    int recordId,
+    List<int> matchedSlots,
+  ) async {
+    final out = <int, String>{};
+    for (final slot in matchedSlots) {
+      final id = (recordId << _fieldBits) | slot;
+      final marked = await engine.highlight(id, query, before: _hlOpen, after: _hlClose);
+      if (marked != null && marked.contains(_hlOpen)) {
+        out[slot] = marked;
+      }
+    }
+    return out;
   }
 
   /// Strategy isn't part of the index fingerprint, so apply it immediately by
@@ -323,18 +406,26 @@ class _SearchPageState extends State<SearchPage> {
                   final matched = r.matchedSlots.isEmpty
                       ? ''
                       : '  一致: ${r.matchedSlots.map(_slotLabel).join(', ')}';
+                  final nameHl = r.highlights[_slotName];
+                  final yomiHl = r.highlights[_slotYomi];
+                  final yomiStyle = theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  );
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(r.record.name, style: theme.textTheme.bodyLarge),
-                        Text(
-                          'よみ: ${r.record.yomi}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
+                        // Matched fields show the engine's highlighted (normalized)
+                        // text; unmatched fields fall back to the raw record text.
+                        if (nameHl != null)
+                          Text.rich(_highlightedSpan(nameHl, base: theme.textTheme.bodyLarge))
+                        else
+                          Text(r.record.name, style: theme.textTheme.bodyLarge),
+                        if (yomiHl != null)
+                          Text.rich(_highlightedSpan(yomiHl, prefix: 'よみ: ', base: yomiStyle))
+                        else
+                          Text('よみ: ${r.record.yomi}', style: yomiStyle),
                         Text(
                           'id=${r.record.id}$matched',
                           style: theme.textTheme.bodySmall?.copyWith(
