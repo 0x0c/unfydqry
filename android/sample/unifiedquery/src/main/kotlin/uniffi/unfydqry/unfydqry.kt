@@ -871,7 +871,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 25168.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
@@ -1405,20 +1405,19 @@ public interface SearchEngineInterface {
     fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong
     
     /**
-     * Returns the normalized text of the document at `id` with matching
-     * regions of `query` wrapped in `before`/`after` markers.
+     * Returns the host's original text for the document at `id` with the
+     * regions matching `query` wrapped in `before`/`after` markers.
      *
      * Returns `nil` / `null` if the document does not exist or if the
      * normalized query is empty.  When the document exists but the query does
-     * not match, the normalized text is returned without markers.
+     * not match, the original text is returned without markers.
      *
-     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
-     * built-in `highlight()` function.  For shorter queries or any other
-     * strategy, matching regions are found by scanning the normalized text
-     * in Rust.
-     *
-     * **Note:** The returned text is the *normalized* form, not the original
-     * raw text the host indexed.
+     * Matching happens on the *normalized* text (the same folding applied at
+     * index and search time), but the marked regions are then mapped back onto
+     * the raw text the host indexed, so the result preserves the original
+     * casing, width, and kana rather than the folded form. Documents indexed
+     * before raw text was retained have no raw to map onto; for those the
+     * normalized text is marked directly.
      */
     fun `highlight`(`query`: kotlin.String, `id`: kotlin.Long, `before`: kotlin.String, `after`: kotlin.String): kotlin.String?
     
@@ -1637,20 +1636,19 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 
     
     /**
-     * Returns the normalized text of the document at `id` with matching
-     * regions of `query` wrapped in `before`/`after` markers.
+     * Returns the host's original text for the document at `id` with the
+     * regions matching `query` wrapped in `before`/`after` markers.
      *
      * Returns `nil` / `null` if the document does not exist or if the
      * normalized query is empty.  When the document exists but the query does
-     * not match, the normalized text is returned without markers.
+     * not match, the original text is returned without markers.
      *
-     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
-     * built-in `highlight()` function.  For shorter queries or any other
-     * strategy, matching regions are found by scanning the normalized text
-     * in Rust.
-     *
-     * **Note:** The returned text is the *normalized* form, not the original
-     * raw text the host indexed.
+     * Matching happens on the *normalized* text (the same folding applied at
+     * index and search time), but the marked regions are then mapped back onto
+     * the raw text the host indexed, so the result preserves the original
+     * casing, width, and kana rather than the folded form. Documents indexed
+     * before raw text was retained have no raw to map onto; for those the
+     * normalized text is marked directly.
      */
     @Throws(SearchException::class)override fun `highlight`(`query`: kotlin.String, `id`: kotlin.Long, `before`: kotlin.String, `after`: kotlin.String): kotlin.String? {
             return FfiConverterOptionalString.lift(

@@ -610,20 +610,19 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
     
     /**
-     * Returns the normalized text of the document at `id` with matching
-     * regions of `query` wrapped in `before`/`after` markers.
+     * Returns the host's original text for the document at `id` with the
+     * regions matching `query` wrapped in `before`/`after` markers.
      *
      * Returns `nil` / `null` if the document does not exist or if the
      * normalized query is empty.  When the document exists but the query does
-     * not match, the normalized text is returned without markers.
+     * not match, the original text is returned without markers.
      *
-     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
-     * built-in `highlight()` function.  For shorter queries or any other
-     * strategy, matching regions are found by scanning the normalized text
-     * in Rust.
-     *
-     * **Note:** The returned text is the *normalized* form, not the original
-     * raw text the host indexed.
+     * Matching happens on the *normalized* text (the same folding applied at
+     * index and search time), but the marked regions are then mapped back onto
+     * the raw text the host indexed, so the result preserves the original
+     * casing, width, and kana rather than the folded form. Documents indexed
+     * before raw text was retained have no raw to map onto; for those the
+     * normalized text is marked directly.
      */
     func highlight(query: String, id: Int64, before: String, after: String) throws  -> String?
     
@@ -857,20 +856,19 @@ open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
 }
     
     /**
-     * Returns the normalized text of the document at `id` with matching
-     * regions of `query` wrapped in `before`/`after` markers.
+     * Returns the host's original text for the document at `id` with the
+     * regions matching `query` wrapped in `before`/`after` markers.
      *
      * Returns `nil` / `null` if the document does not exist or if the
      * normalized query is empty.  When the document exists but the query does
-     * not match, the normalized text is returned without markers.
+     * not match, the original text is returned without markers.
      *
-     * For `trigram_bm25` with queries of 3+ characters, this uses FTS5's
-     * built-in `highlight()` function.  For shorter queries or any other
-     * strategy, matching regions are found by scanning the normalized text
-     * in Rust.
-     *
-     * **Note:** The returned text is the *normalized* form, not the original
-     * raw text the host indexed.
+     * Matching happens on the *normalized* text (the same folding applied at
+     * index and search time), but the marked regions are then mapped back onto
+     * the raw text the host indexed, so the result preserves the original
+     * casing, width, and kana rather than the folded form. Documents indexed
+     * before raw text was retained have no raw to map onto; for those the
+     * normalized text is marked directly.
      */
 open func highlight(query: String, id: Int64, before: String, after: String)throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
@@ -2238,7 +2236,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_highlight() != 25168) {
+    if (uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {

@@ -197,12 +197,13 @@ class SearchEngine {
     }
   }
 
-  /// Returns the normalized text of the document [id] with regions matching
-  /// [query] wrapped in [before]/[after] markers.
+  /// Returns the host's original text for the document [id] with the regions
+  /// matching [query] wrapped in [before]/[after] markers.
   ///
   /// Returns null when the document does not exist or [query] is empty once
-  /// normalized; returns the plain normalized text when the query does not
-  /// match. The returned text is the *normalized* form, not the raw text.
+  /// normalized; returns the plain original text when the query does not match.
+  /// Matching happens on the normalized form, but the marked regions are mapped
+  /// back onto the raw text, so casing, width, and kana are preserved.
   ///
   /// Records are stored under a packed id; to highlight a record field, pass
   /// `recordId << fieldBits | slot` (the host's `fieldBits`, default 8).
