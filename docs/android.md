@@ -98,6 +98,19 @@ val engine = SearchEngine.withConfig(
 val repacked = engine.changeFieldBits(newFieldBits = 10.toUByte())  // returns the count repacked
 ```
 
+## Highlighting matches
+
+`highlight(query, id, before, after)` returns the document's original text with
+matching regions wrapped in caller-specified markers, or `null` if the document
+does not exist or the normalized query is empty. The concept (normalized
+matching mapped back onto the raw host text) is in
+[Highlighting matched regions](../README.md#highlighting-matched-regions).
+
+```kotlin
+val snippet = engine.highlight("検索", 1L, "<b>", "</b>")
+// → "情報<b>検索</b>プログラム"
+```
+
 ## Selecting a combination
 
 The normalization profile and search strategy are chosen on the binding side —

@@ -83,6 +83,19 @@ let engine = try SearchEngine.withConfig(
 let repacked = try engine.changeFieldBits(newFieldBits: 10)  // returns the count repacked
 ```
 
+## Highlighting matches
+
+`highlight(query:id:before:after:)` returns the document's original text with
+matching regions wrapped in caller-specified markers, or `nil` if the document
+does not exist or the normalized query is empty. The concept (normalized
+matching mapped back onto the raw host text) is in
+[Highlighting matched regions](../README.md#highlighting-matched-regions).
+
+```swift
+let snippet = try engine.highlight(query: "検索", id: 1, before: "<b>", after: "</b>")
+// → Optional("情報<b>検索</b>プログラム")
+```
+
 ## Selecting a combination
 
 The normalization profile and search strategy are chosen on the binding side —
