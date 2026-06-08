@@ -84,7 +84,7 @@ const _stepToggles = <StepToggle>[
 
 /// A search result row: the record plus which of its fields matched.
 ///
-/// [highlights] holds the marked normalized text per matched slot, as produced
+/// [highlights] holds the marked original text per matched slot, as produced
 /// by the engine's `highlight` (matches wrapped in [_hlOpen]/[_hlClose]).
 /// A slot is present only when the query actually matched its field.
 typedef ResultRow = ({
@@ -416,8 +416,9 @@ class _SearchPageState extends State<SearchPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Matched fields show the engine's highlighted (normalized)
-                        // text; unmatched fields fall back to the raw record text.
+                        // Matched fields show the engine's highlighted text (the
+                        // original field text with matches wrapped); unmatched
+                        // fields fall back to the plain raw record text.
                         if (nameHl != null)
                           Text.rich(_highlightedSpan(nameHl, base: theme.textTheme.bodyLarge))
                         else

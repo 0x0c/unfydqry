@@ -207,7 +207,7 @@ To inspect normalization directly there are also free functions: `normalizeLoose
 
 ### Highlighting matched regions
 
-`highlight(query, id, before, after)` returns the *normalized* text of a document with matching regions wrapped in caller-specified markers:
+`highlight(query, id, before, after)` returns the document's original host text with matching regions wrapped in caller-specified markers:
 
 ```swift
 // iOS
@@ -221,11 +221,11 @@ val snippet = engine.highlight("検索", 1L, "<b>", "</b>")
 // → "情報<b>検索</b>プログラム"
 ```
 
-Returns `nil` / `null` if the document does not exist or if the normalized query is empty. When the document exists but the query does not match, the normalized text is returned without markers.
+Returns `nil` / `null` if the document does not exist or if the normalized query is empty. When the document exists but the query does not match, the original text is returned without markers.
 
-For `trigram_bm25` with queries of 3+ characters, highlighting uses FTS5's built-in `highlight()` function. For shorter queries or any other strategy, matching regions are found by scanning the normalized text in Rust.
+Matching is performed on the normalized form (the same folding applied at index and search time), but the marked regions are mapped back onto the raw host text, so the result preserves the original casing, width, and kana rather than the folded form. When a match lands inside a single source character that expanded under normalization, the marker snaps outward to cover that whole character.
 
-> **Note:** The returned text is the *normalized* form, not the original raw text the host indexed.
+> **Note:** Documents indexed before raw text was retained have no raw to map onto; for those the normalized text is marked directly.
 
 ## Multi-field records (record-layer API)
 

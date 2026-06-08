@@ -253,8 +253,9 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(results, key = { it.record.id }) { row ->
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        // Matched fields show the engine's highlighted (normalized)
-                        // text; unmatched fields fall back to the raw record text.
+                        // Matched fields show the engine's highlighted text (the
+                        // original field text with matches wrapped); unmatched
+                        // fields fall back to the plain raw record text.
                         val nameHl = row.highlights[RecordSlot.NAME.slot]
                         if (nameHl != null) {
                             Text(Highlight.annotated(nameHl), style = MaterialTheme.typography.bodyLarge)
