@@ -1813,4 +1813,40 @@ mod tests {
         let c = e.match_count("サーバー".into()).unwrap();
         assert!(c >= 1, "should match at least the exact doc");
     }
+
+    #[test]
+    fn match_count_with_suffix_strategy() {
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "とうきょう".into()).unwrap();
+        e.index(2, "さっぽろう".into()).unwrap();
+        e.index(3, "おおさか".into()).unwrap();
+
+        assert_eq!(e.match_count("う".into()).unwrap(), 2);
+        assert_eq!(e.match_count("か".into()).unwrap(), 1);
+        assert_eq!(e.match_count("xyz".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn match_count_with_all_terms_strategy() {
+        let e = engine_with(SearchStrategy::AllTerms);
+        e.index(1, "サーバー データベース".into()).unwrap();
+        e.index(2, "サーバー ネットワーク".into()).unwrap();
+        e.index(3, "データベース ネットワーク".into()).unwrap();
+
+        // Single term matches two docs.
+        assert_eq!(e.match_count("さーばー".into()).unwrap(), 2);
+        // Both terms required — only doc 1 has both.
+        assert_eq!(e.match_count("さーばー でーたべーす".into()).unwrap(), 1);
+        assert_eq!(e.match_count("xyz".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn match_count_with_all_terms_escapes_wildcards() {
+        let e = engine_with(SearchStrategy::AllTerms);
+        e.index(1, "100% done".into()).unwrap();
+        e.index(2, "completely done".into()).unwrap();
+
+        // "%" must match literally, not as a LIKE wildcard.
+        assert_eq!(e.match_count("%".into()).unwrap(), 1);
+    }
 }

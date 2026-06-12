@@ -27,8 +27,10 @@ pub trait SearchAlgorithm: Send + Sync {
     /// Returns the total number of documents matching `query`, without a limit.
     ///
     /// The default implementation runs `search` with `u32::MAX` and counts the
-    /// results. SQL-based strategies override this with an efficient
-    /// `SELECT COUNT(*)`.
+    /// results — this materializes all hits into memory, so it is only suitable
+    /// for strategies that already scan every document (e.g. the Rust-side fuzzy
+    /// and edit-distance strategies).  SQL-based strategies override this with
+    /// an efficient `SELECT COUNT(*)`.
     fn match_count(&self, conn: &Connection, query: &str) -> Result<u64, SearchError> {
         Ok(self.search(conn, query, u32::MAX)?.len() as u64)
     }
