@@ -227,6 +227,24 @@ Matching is performed on the normalized form (the same folding applied at index 
 
 > **Note:** Documents indexed before raw text was retained have no raw to map onto; for those the normalized text is marked directly.
 
+### Counting matches
+
+`matchCount(query)` returns the total number of documents matching the query, without a limit — useful for "About N results" UI patterns.
+
+```swift
+// iOS
+let total = try engine.matchCount(query: "とうきょう")
+// → 42
+```
+
+```kotlin
+// Android
+val total = engine.matchCount("とうきょう")
+// → 42
+```
+
+Returns `0` for empty or whitespace-only queries. For SQL-based strategies the count is computed with an efficient `SELECT COUNT(*)`; for the Rust-side fuzzy and edit-distance strategies it runs the full matching pass internally.
+
 ## Multi-field records (record-layer API)
 
 `index` / `search` treat each `id` as a single text blob. When a record has several searchable fields — a contact's name, reading, and note, say — the **record-layer API** indexes each field separately while still returning one result per record, so a query can match *any* field and you learn *which* field matched.
