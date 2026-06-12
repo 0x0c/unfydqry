@@ -552,6 +552,20 @@ impl SearchEngine {
         self.strategy.search(&conn, &q, limit)
     }
 
+    /// Returns the total number of documents matching `query`, without a limit.
+    ///
+    /// This is useful for displaying "About N results" in search UIs. The
+    /// query is normalized the same way as `search`. Returns `0` for empty
+    /// or whitespace-only queries.
+    pub fn match_count(&self, query: String) -> Result<u64, SearchError> {
+        let q = self.normalizer.normalize(&query);
+        if q.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        self.strategy.match_count(&conn, &q)
+    }
+
     /// Returns the host's original text for the document at `id` with the
     /// regions matching `query` wrapped in `before`/`after` markers.
     ///
@@ -1739,5 +1753,64 @@ mod tests {
         )
         .expect("open");
         assert_eq!(e.field_bits(), 6);
+    }
+
+    // --- match_count ---
+
+    #[test]
+    fn match_count_returns_total_matches() {
+        let e = fresh();
+        e.index(1, "とうきょう".into()).unwrap();
+        e.index(2, "とうきょうタワー".into()).unwrap();
+        e.index(3, "おおさか".into()).unwrap();
+
+        assert_eq!(e.match_count("とうきょう".into()).unwrap(), 2);
+        assert_eq!(e.match_count("おおさか".into()).unwrap(), 1);
+    }
+
+    #[test]
+    fn match_count_empty_query_returns_zero() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        assert_eq!(e.match_count("".into()).unwrap(), 0);
+        assert_eq!(e.match_count("   ".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn match_count_no_match_returns_zero() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        assert_eq!(e.match_count("xyz".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn match_count_with_substring_strategy() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "abcdef".into()).unwrap();
+        e.index(2, "xyzabc".into()).unwrap();
+        e.index(3, "nothing".into()).unwrap();
+
+        assert_eq!(e.match_count("abc".into()).unwrap(), 2);
+    }
+
+    #[test]
+    fn match_count_with_prefix_strategy() {
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "とうきょう".into()).unwrap();
+        e.index(2, "とうほく".into()).unwrap();
+        e.index(3, "おおさか".into()).unwrap();
+
+        assert_eq!(e.match_count("とう".into()).unwrap(), 2);
+    }
+
+    #[test]
+    fn match_count_with_fuzzy_trigram_strategy() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "サーバー".into()).unwrap();
+        e.index(2, "サーバーレス".into()).unwrap();
+        e.index(3, "completely different".into()).unwrap();
+
+        let c = e.match_count("サーバー".into()).unwrap();
+        assert!(c >= 1, "should match at least the exact doc");
     }
 }

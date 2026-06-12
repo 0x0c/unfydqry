@@ -56,6 +56,23 @@ impl SearchAlgorithm for Prefix {
         };
         Ok(rows)
     }
+
+    fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
+        let c: u64 = if let Some(upper) = prefix_upper_bound(q) {
+            conn.query_row(
+                "SELECT COUNT(*) FROM entries WHERE norm >= ?1 AND norm < ?2",
+                params![q, upper],
+                |r| r.get(0),
+            )?
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM entries WHERE norm >= ?1",
+                params![q],
+                |r| r.get(0),
+            )?
+        };
+        Ok(c)
+    }
 }
 
 #[cfg(test)]

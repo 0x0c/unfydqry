@@ -20,4 +20,14 @@ impl SearchAlgorithm for Suffix {
         })?;
         Ok(rows.filter_map(Result::ok).collect())
     }
+
+    fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
+        let escaped = escape_like(q);
+        let c: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM entries WHERE norm LIKE '%'||?1 ESCAPE '\\'",
+            params![escaped],
+            |r| r.get(0),
+        )?;
+        Ok(c)
+    }
 }

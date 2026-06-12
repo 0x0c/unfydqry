@@ -23,6 +23,15 @@ mod trigram_bm25;
 /// guaranteed non-empty by the engine.
 pub trait SearchAlgorithm: Send + Sync {
     fn search(&self, conn: &Connection, query: &str, limit: u32) -> Result<Vec<Hit>, SearchError>;
+
+    /// Returns the total number of documents matching `query`, without a limit.
+    ///
+    /// The default implementation runs `search` with `u32::MAX` and counts the
+    /// results. SQL-based strategies override this with an efficient
+    /// `SELECT COUNT(*)`.
+    fn match_count(&self, conn: &Connection, query: &str) -> Result<u64, SearchError> {
+        Ok(self.search(conn, query, u32::MAX)?.len() as u64)
+    }
 }
 
 /// Escapes LIKE special characters (`%`, `_`, `\`) so they match literally.

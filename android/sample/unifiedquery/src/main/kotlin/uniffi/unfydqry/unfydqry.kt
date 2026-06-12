@@ -654,6 +654,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index_record(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_match_count(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_reindex(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove(
@@ -714,6 +716,8 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_index_record(`ptr`: Long,`recordId`: Long,`fields`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_unfydqry_fn_method_searchengine_match_count(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_remove(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -878,6 +882,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527.toShort()) {
@@ -1443,6 +1450,15 @@ public interface SearchEngineInterface {
     fun `indexRecord`(`recordId`: kotlin.Long, `fields`: List<FieldValue>)
     
     /**
+     * Returns the total number of documents matching `query`, without a limit.
+     *
+     * This is useful for displaying "About N results" in search UIs. The
+     * query is normalized the same way as `search`. Returns `0` for empty
+     * or whitespace-only queries.
+     */
+    fun `matchCount`(`query`: kotlin.String): kotlin.ULong
+    
+    /**
      * Regenerates the index by re-normalizing every stored document's raw text
      * with this engine's current profile, then stamps that profile.
      *
@@ -1704,6 +1720,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 }
     }
     
+    
+
+    
+    /**
+     * Returns the total number of documents matching `query`, without a limit.
+     *
+     * This is useful for displaying "About N results" in search UIs. The
+     * query is normalized the same way as `search`. Returns `0` for empty
+     * or whitespace-only queries.
+     */
+    @Throws(SearchException::class)override fun `matchCount`(`query`: kotlin.String): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_match_count(
+        it,
+        FfiConverterString.lower(`query`),_status)
+}
+    }
+    )
+    }
     
 
     

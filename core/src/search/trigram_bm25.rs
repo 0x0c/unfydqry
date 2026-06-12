@@ -38,4 +38,24 @@ impl SearchAlgorithm for TrigramBm25 {
         })?;
         Ok(rows.filter_map(Result::ok).collect())
     }
+
+    fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
+        if q.chars().nth(2).is_none() {
+            let escaped = escape_like(q);
+            let c: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM entries WHERE norm LIKE '%'||?1||'%' ESCAPE '\\'",
+                params![escaped],
+                |r| r.get(0),
+            )?;
+            return Ok(c);
+        }
+
+        let phrase = format!("\"{}\"", q.replace('"', "\"\""));
+        let c: u64 = conn.query_row(
+            "SELECT COUNT(*) FROM docs WHERE docs MATCH ?1",
+            params![phrase],
+            |r| r.get(0),
+        )?;
+        Ok(c)
+    }
 }
