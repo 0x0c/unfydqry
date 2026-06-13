@@ -9,7 +9,7 @@ import uniffi.unfydqry.SearchEngine
 /**
  * Native coverage for `searchPage` and `matchCount`.
  *
- * Neither method can be expressed through the shared `spec/*.json` runner — its
+ * Neither method can be expressed through the shared spec JSON runner — its
  * assertion schema only drives `search` — so their behaviour through the Kotlin
  * binding is pinned here, mirroring the Rust core's `engine.rs` unit tests so a
  * regression in the core surfaces on every runner at once.
