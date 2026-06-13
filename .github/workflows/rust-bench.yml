@@ -30,10 +30,10 @@ jobs:
     # Enough to surface regressions, not to publish absolute numbers.
     env:
       CRITERION_ARGS: "--measurement-time 2 --warm-up-time 1"
-      # The three Criterion (harness = false) bench targets. Listed explicitly
+      # The four Criterion (harness = false) bench targets. Listed explicitly
       # rather than via --benches so the libtest harness on the lib/bin targets
       # — which doesn't understand --save-baseline — is never invoked.
-      BENCHES: "--bench search --bench index --bench normalize"
+      BENCHES: "--bench search --bench index --bench normalize --bench highlight"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
