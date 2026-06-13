@@ -71,5 +71,41 @@ fn bench_reindex(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_bulk_index, bench_single_index, bench_reindex);
+fn bench_remove(c: &mut Criterion) {
+    let mut group = c.benchmark_group("remove/single");
+
+    // Pre-populate with 1,000 docs. Each iteration removes one existing row; the
+    // (unmeasured) setup re-inserts the next target so the corpus never empties
+    // and every measured `remove` actually deletes a row.
+    let docs = helpers::generate_docs(1_000);
+    let engine = SearchEngine::new(":memory:".to_string()).unwrap();
+    for (i, doc) in docs.iter().enumerate() {
+        engine.index(i as i64, doc.clone()).unwrap();
+    }
+
+    let n = docs.len() as i64;
+    let mut id: i64 = 0;
+    group.bench_function("delete", |b| {
+        b.iter_with_setup(
+            || {
+                let target = id % n;
+                id += 1;
+                engine.index(target, docs[target as usize].clone()).unwrap();
+                target
+            },
+            |target| {
+                engine.remove(target).unwrap();
+            },
+        );
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_bulk_index,
+    bench_single_index,
+    bench_reindex,
+    bench_remove
+);
 criterion_main!(benches);
