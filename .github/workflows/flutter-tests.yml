@@ -5,7 +5,7 @@ on:
   # friendly). Path relevance is decided per-job below: when nothing relevant
   # changed, the test job is skipped, which counts as a passing required check.
   push:
-    branches: [main, feat/flutter]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
