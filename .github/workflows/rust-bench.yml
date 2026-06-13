@@ -45,12 +45,16 @@ permissions:
 #   numbers.
 # - BENCH_DOC_COUNTS: drops the heavy 10k corpus tier in CI (read by the bench
 #   helpers); local runs omit the var and keep the full set.
+# - BENCH_QUERY_LENS: trims the search bench's query-length sweep to one length
+#   in CI (read by the bench helpers). Drops whole rows, not samples — surviving
+#   rows keep full precision; local runs omit the var and sweep all lengths.
 # - BENCHES: the four Criterion (harness = false) bench targets, listed
 #   explicitly rather than via --benches so the libtest harness on the lib/bin
 #   targets — which doesn't understand --save-baseline — is never invoked.
 env:
   CRITERION_ARGS: "--measurement-time 1 --warm-up-time 0.5"
   BENCH_DOC_COUNTS: "100,1000"
+  BENCH_QUERY_LENS: "medium"
   BENCHES: "--bench search --bench index --bench normalize --bench highlight"
 
 jobs:
@@ -114,7 +118,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: core/target/criterion
-          key: criterion-base-${{ github.event.pull_request.base.sha }}-v2
+          key: criterion-base-${{ github.event.pull_request.base.sha }}-v3
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.cache-base.outputs.cache-hit != 'true'
@@ -184,7 +188,7 @@ jobs:
             echo "## Criterion benchmark comparison"
             echo ""
             echo "PR \`${{ github.event.pull_request.head.sha }}\` vs base \`${{ github.event.pull_request.base.sha }}\`."
-            echo "_Measured with \`$CRITERION_ARGS\` (corpus sizes \`$BENCH_DOC_COUNTS\`) on shared CI runners — PR and base run on separate runners, so treat small (<10%) deltas as noise._"
+            echo "_Measured with \`$CRITERION_ARGS\` (corpus sizes \`$BENCH_DOC_COUNTS\`, search query lengths \`$BENCH_QUERY_LENS\`) on shared CI runners — PR and base run on separate runners, so treat small (<10%) deltas as noise._"
             echo ""
             if [ -z "$(find target/criterion -type d -name base -print -quit 2>/dev/null)" ]; then
               echo "> ⚠️ Could not benchmark the base commit (it may predate these benchmarks). No comparison available."

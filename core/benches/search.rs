@@ -29,11 +29,7 @@ fn build_engine(strategy: SearchStrategy, n: usize) -> std::sync::Arc<SearchEngi
 }
 
 fn bench_search(c: &mut Criterion) {
-    let query_sets: &[(&str, &[&str])] = &[
-        ("short", helpers::SHORT_QUERIES),
-        ("medium", helpers::MEDIUM_QUERIES),
-        ("long", helpers::LONG_QUERIES),
-    ];
+    let query_sets = helpers::query_sets();
 
     let doc_counts = helpers::doc_counts();
     for &(strategy_name, strategy) in STRATEGIES {
@@ -43,7 +39,7 @@ fn bench_search(c: &mut Criterion) {
         for &n in &doc_counts {
             let engine = build_engine(strategy, n);
 
-            for &(query_label, queries) in query_sets {
+            for &(query_label, queries) in &query_sets {
                 group.bench_with_input(BenchmarkId::new(query_label, n), &n, |b, _| {
                     let mut qi = 0;
                     b.iter(|| {
