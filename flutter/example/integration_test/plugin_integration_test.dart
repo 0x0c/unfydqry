@@ -47,7 +47,7 @@ void main() {
       await engine.index(42, '東京タワー');
       final hits = await engine.search('東京');
       expect(hits.map((h) => h.id), [42]);
-      expect(hits.single.score, isFinite);
+      expect(hits.single.score.isFinite, isTrue);
 
       // After remove the doc is no longer findable.
       await engine.remove(42);
