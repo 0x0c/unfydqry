@@ -57,6 +57,38 @@ impl SearchAlgorithm for Prefix {
         Ok(rows)
     }
 
+    fn search_paged(
+        &self,
+        conn: &Connection,
+        q: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Hit>, SearchError> {
+        let rows = if let Some(upper) = prefix_upper_bound(q) {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM entries WHERE norm >= ?1 AND norm < ?2 LIMIT ?3 OFFSET ?4",
+            )?;
+            let rows = stmt.query_map(params![q, upper, limit, offset], |r| {
+                Ok(Hit {
+                    id: r.get(0)?,
+                    score: 0.0,
+                })
+            })?;
+            rows.filter_map(Result::ok).collect()
+        } else {
+            let mut stmt =
+                conn.prepare("SELECT id FROM entries WHERE norm >= ?1 LIMIT ?2 OFFSET ?3")?;
+            let rows = stmt.query_map(params![q, limit, offset], |r| {
+                Ok(Hit {
+                    id: r.get(0)?,
+                    score: 0.0,
+                })
+            })?;
+            rows.filter_map(Result::ok).collect()
+        };
+        Ok(rows)
+    }
+
     fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
         let c: u64 = if let Some(upper) = prefix_upper_bound(q) {
             conn.query_row(

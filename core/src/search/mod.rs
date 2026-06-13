@@ -34,6 +34,25 @@ pub trait SearchAlgorithm: Send + Sync {
     fn match_count(&self, conn: &Connection, query: &str) -> Result<u64, SearchError> {
         Ok(self.search(conn, query, u32::MAX)?.len() as u64)
     }
+
+    /// Returns up to `limit` hits, skipping the first `offset` results.
+    ///
+    /// The default implementation fetches `limit + offset` results via
+    /// `search()` and drops the first `offset` entries.  SQL-based strategies
+    /// override this with `LIMIT ? OFFSET ?` for efficiency.
+    fn search_paged(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Hit>, SearchError> {
+        let total = limit.saturating_add(offset);
+        let mut hits = self.search(conn, query, total)?;
+        let drain_to = (offset as usize).min(hits.len());
+        hits.drain(..drain_to);
+        Ok(hits)
+    }
 }
 
 /// Escapes LIKE special characters (`%`, `_`, `\`) so they match literally.

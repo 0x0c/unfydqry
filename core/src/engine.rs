@@ -552,6 +552,26 @@ impl SearchEngine {
         self.strategy.search(&conn, &q, limit)
     }
 
+    /// Returns up to `per_page` hits for the given `page` (0-indexed).
+    ///
+    /// Equivalent to `search` with an offset of `page * per_page`. Page 0 with
+    /// a given `per_page` returns the same results as `search(query, per_page)`.
+    /// Combine with `match_count` to compute the total number of pages.
+    pub fn search_page(
+        &self,
+        query: String,
+        per_page: u32,
+        page: u32,
+    ) -> Result<Vec<Hit>, SearchError> {
+        let q = self.normalizer.normalize(&query);
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let offset = page.saturating_mul(per_page);
+        let conn = self.conn.lock().unwrap();
+        self.strategy.search_paged(&conn, &q, per_page, offset)
+    }
+
     /// Returns the total number of documents matching `query`, without a limit.
     ///
     /// This is useful for displaying "About N results" in search UIs. The
@@ -1848,5 +1868,107 @@ mod tests {
 
         // "%" must match literally, not as a LIKE wildcard.
         assert_eq!(e.match_count("%".into()).unwrap(), 1);
+    }
+
+    // --- search_page ---
+
+    #[test]
+    fn search_page_returns_correct_pages() {
+        let e = fresh();
+        // Index 5 docs with distinct content so bm25 returns all of them.
+        for i in 1..=5 {
+            e.index(i, format!("とうきょう ドキュメント{i}")).unwrap();
+        }
+
+        let page0 = e.search_page("とうきょう".into(), 2, 0).unwrap();
+        let page1 = e.search_page("とうきょう".into(), 2, 1).unwrap();
+        let page2 = e.search_page("とうきょう".into(), 2, 2).unwrap();
+
+        assert_eq!(page0.len(), 2);
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page2.len(), 1); // 5th doc
+
+        // No overlap between pages.
+        let ids0: Vec<i64> = page0.iter().map(|h| h.id).collect();
+        let ids1: Vec<i64> = page1.iter().map(|h| h.id).collect();
+        let ids2: Vec<i64> = page2.iter().map(|h| h.id).collect();
+        assert!(ids0.iter().all(|id| !ids1.contains(id)));
+        assert!(ids1.iter().all(|id| !ids2.contains(id)));
+    }
+
+    #[test]
+    fn search_page_zero_equals_search() {
+        let e = fresh();
+        e.index(1, "サーバー".into()).unwrap();
+        e.index(2, "データベース".into()).unwrap();
+
+        let search_result = e.search("サーバー".into(), 10).unwrap();
+        let page_result = e.search_page("サーバー".into(), 10, 0).unwrap();
+
+        assert_eq!(search_result.len(), page_result.len());
+        for (s, p) in search_result.iter().zip(page_result.iter()) {
+            assert_eq!(s.id, p.id);
+        }
+    }
+
+    #[test]
+    fn search_page_beyond_results_returns_empty() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+
+        let page = e.search_page("hello".into(), 10, 100).unwrap();
+        assert!(page.is_empty());
+    }
+
+    #[test]
+    fn search_page_empty_query_returns_empty() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+
+        let page = e.search_page("".into(), 10, 0).unwrap();
+        assert!(page.is_empty());
+    }
+
+    #[test]
+    fn search_page_with_substring_strategy() {
+        let e = engine_with(SearchStrategy::Substring);
+        for i in 1..=5 {
+            e.index(i, format!("abc テスト{i}")).unwrap();
+        }
+
+        let page0 = e.search_page("abc".into(), 3, 0).unwrap();
+        let page1 = e.search_page("abc".into(), 3, 1).unwrap();
+
+        assert_eq!(page0.len(), 3);
+        assert_eq!(page1.len(), 2);
+    }
+
+    #[test]
+    fn search_page_per_page_zero_returns_empty() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+
+        let page = e.search_page("hello".into(), 0, 0).unwrap();
+        assert!(page.is_empty());
+        let page = e.search_page("hello".into(), 0, 5).unwrap();
+        assert!(page.is_empty());
+    }
+
+    #[test]
+    fn search_page_with_fuzzy_trigram_strategy() {
+        let e = engine_with(SearchStrategy::FuzzyTrigram);
+        e.index(1, "サーバー".into()).unwrap();
+        e.index(2, "サーバーレス".into()).unwrap();
+
+        let page0 = e.search_page("サーバー".into(), 1, 0).unwrap();
+        let page1 = e.search_page("サーバー".into(), 1, 1).unwrap();
+
+        assert_eq!(page0.len(), 1);
+        // page1 may have 0 or 1 depending on how many match.
+        assert!(page1.len() <= 1);
+        // If both pages have results, they should be different docs.
+        if !page1.is_empty() {
+            assert_ne!(page0[0].id, page1[0].id);
+        }
     }
 }

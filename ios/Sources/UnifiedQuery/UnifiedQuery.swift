@@ -690,6 +690,15 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func search(query: String, limit: UInt32) throws  -> [Hit]
     
     /**
+     * Returns up to `per_page` hits for the given `page` (0-indexed).
+     *
+     * Equivalent to `search` with an offset of `page * per_page`. Page 0 with
+     * a given `per_page` returns the same results as `search(query, per_page)`.
+     * Combine with `match_count` to compute the total number of pages.
+     */
+    func searchPage(query: String, perPage: UInt32, page: UInt32) throws  -> [Hit]
+    
+    /**
      * Searches across record fields and returns at most `limit` records,
      * ranked by their best matching field (smallest score first).
      *
@@ -997,6 +1006,24 @@ open func search(query: String, limit: UInt32)throws  -> [Hit]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+    
+    /**
+     * Returns up to `per_page` hits for the given `page` (0-indexed).
+     *
+     * Equivalent to `search` with an offset of `page * per_page`. Page 0 with
+     * a given `per_page` returns the same results as `search(query, per_page)`.
+     * Combine with `match_count` to compute the total number of pages.
+     */
+open func searchPage(query: String, perPage: UInt32, page: UInt32)throws  -> [Hit]  {
+    return try  FfiConverterSequenceTypeHit.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_search_page(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(perPage),
+        FfiConverterUInt32.lower(page),$0
     )
 })
 }
@@ -2283,6 +2310,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_search() != 13991) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_search_page() != 60065) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653) {

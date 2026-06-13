@@ -39,6 +39,42 @@ impl SearchAlgorithm for AllTerms {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    fn search_paged(
+        &self,
+        conn: &Connection,
+        q: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<Hit>, SearchError> {
+        let escaped_terms: Vec<String> = q.split_whitespace().map(escape_like).collect();
+        if escaped_terms.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let clause = (1..=escaped_terms.len())
+            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!(
+            "SELECT id FROM entries WHERE {clause} LIMIT ?{} OFFSET ?{}",
+            escaped_terms.len() + 1,
+            escaped_terms.len() + 2
+        );
+
+        let mut binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
+        binds.push(&limit);
+        binds.push(&offset);
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(binds), |r| {
+            Ok(Hit {
+                id: r.get(0)?,
+                score: 0.0,
+            })
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
     fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
         let escaped_terms: Vec<String> = q.split_whitespace().map(escape_like).collect();
         if escaped_terms.is_empty() {
