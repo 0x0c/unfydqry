@@ -1,0 +1,29 @@
+# CODEOWNERS — routes review by ownership zone (see AGENTS.md §2).
+#
+# Purpose: when parallel work touches a shared or sensitive zone, the right
+# reviewers are pulled in automatically, reducing silent collisions/regressions.
+# Patterns are last-match-wins, so more specific rules sit lower in the file.
+
+# Default owner for everything not matched below.
+*                                       @0x0c
+
+# --- Core (truth): all search behaviour lives here ---
+/core/                                  @0x0c
+
+# --- Generated UniFFI bindings: never hand-edited; regenerated from core/ ---
+# Listed so any change to them surfaces in review (they should only ever move
+# as a side effect of `make gen-bindings`).
+/ios/Sources/UnifiedQuery/UnifiedQuery.swift                                   @0x0c
+/android/sample/unifiedquery/src/main/kotlin/uniffi/unfydqry/unfydqry.kt       @0x0c
+
+# --- Automation & config: these guard everyone; change deliberately ---
+/Makefile                               @0x0c
+/.githooks/                             @0x0c
+/.github/                               @0x0c
+/.claude/                               @0x0c
+
+# --- Shared working agreement ---
+/AGENTS.md                              @0x0c
+/CONTRIBUTING.md                        @0x0c
+/docs/ja/AGENTS.md                      @0x0c
+/docs/ja/CONTRIBUTING.md                @0x0c

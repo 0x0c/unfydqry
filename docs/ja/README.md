@@ -447,6 +447,14 @@ cd flutter/example && flutter run
 | Android Gradle モジュール | `:unifiedquery` |
 | Kotlin パッケージ | `uniffi.unfydqry` |
 
+## コントリビューション
+
+このリポジトリでは人間と AI エージェントが並行して作業する。衝突や退行を防ぐための
+共通作業合意は [AGENTS.md](AGENTS.md) に、セットアップ手順は
+[CONTRIBUTING.md](CONTRIBUTING.md) にある。要点: 挙動の変更は `core/` に入れ、
+Swift/Kotlin バインディングは生成物（`make gen-bindings`、手編集禁止）であり、push 前に
+`make ci` を通すこと。フックは `git config core.hooksPath .githooks` で一度だけ有効化する。
+
 ## ライセンス
 
 MIT ライセンス。[LICENSE](../../LICENSE) を参照。

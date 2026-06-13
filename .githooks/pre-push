@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Pre-push guard for parallel development.
+#
+# Runs the same gates CI runs *before* a push leaves your machine, so a push
+# can never break the shared CI gates for everyone else:
+#
+#   make ci  ==  make check (fmt-check + clippy + test)  +  make verify-bindings
+#
+# verify-bindings catches the most common concurrent-work regression: committed
+# Swift/Kotlin bindings that drifted from the Rust signatures because someone
+# forgot to run `make gen-bindings`.
+#
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+#
+# Emergency override (use sparingly, e.g. pushing a docs-only WIP branch):
+#     SKIP_PREPUSH=1 git push ...
+set -euo pipefail
+
+if [ "${SKIP_PREPUSH:-0}" = "1" ]; then
+  echo "pre-push: SKIP_PREPUSH=1 set — skipping local CI gates." >&2
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+echo "pre-push: make ci (fmt-check + clippy + test + verify-bindings)"
+if ! make -C "$repo_root" ci; then
+  echo >&2
+  echo "pre-push: 'make ci' failed. Fix the issues above before pushing, or set" >&2
+  echo "          SKIP_PREPUSH=1 to override in an emergency." >&2
+  exit 1
+fi

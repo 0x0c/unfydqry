@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in */ios/Sources/UnifiedQuery/UnifiedQuery.swift|*/android/sample/unifiedquery/src/main/kotlin/uniffi/unfydqry/unfydqry.kt) echo \"Blocked: this is an auto-generated UniFFI binding (see AGENTS.md). Do not hand-edit it. Change core/ and run 'make gen-bindings' to regenerate.\" >&2; exit 2;; esac",
+            "statusMessage": "guard generated bindings"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
