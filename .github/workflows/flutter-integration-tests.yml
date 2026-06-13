@@ -64,9 +64,14 @@ jobs:
         working-directory: core
         # The Flutter Android plugin's build.gradle.kts adds ../../android/jniLibs
         # to jniLibs.srcDirs, so JNA loads libunfydqry.so from there at runtime.
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        #
+        # ANDROID_NDK_LATEST_HOME / ANDROID_NDK_ROOT are runner-provided *shell*
+        # env vars, not part of the GitHub `env` expression context — so they
+        # must be read in the script (`$VAR`), not via `${{ env.* }}` (which
+        # would expand to an empty string and break cargo-ndk's NDK detection).
         run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          echo "Using NDK at: $ANDROID_NDK_HOME"
           cargo ndk -t x86_64 -t arm64-v8a -o ../android/jniLibs build --release
 
       - name: Set up JDK 17
