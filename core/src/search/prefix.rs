@@ -23,38 +23,63 @@ fn prefix_upper_bound(s: &str) -> Option<String> {
             *chars.last_mut().unwrap() = next;
             return Some(chars.into_iter().collect());
         }
-        // last was char::MAX — pop it and try the previous character.
         chars.pop();
     }
     None
+}
+
+/// Runs a prefix range query with the given SELECT prefix and trailing SQL
+/// (e.g. `"LIMIT ?3"` or `"LIMIT ?3 OFFSET ?4"`), binding `extra_params`
+/// after the range parameters.
+fn prefix_query(
+    conn: &Connection,
+    q: &str,
+    upper: &Option<String>,
+    select: &str,
+    extra_sql: &str,
+    extra_params: &[&dyn rusqlite::ToSql],
+) -> Result<Vec<Hit>, SearchError> {
+    let rows = if let Some(upper) = upper {
+        let sql = format!("{select} WHERE norm >= ?1 AND norm < ?2 {extra_sql}");
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q as &dyn rusqlite::ToSql, upper];
+        all_params.extend_from_slice(extra_params);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(all_params), |r| {
+            Ok(Hit {
+                id: r.get(0)?,
+                score: 0.0,
+            })
+        })?;
+        rows.filter_map(Result::ok).collect()
+    } else {
+        let sql = format!("{select} WHERE norm >= ?1 {extra_sql}");
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q as &dyn rusqlite::ToSql];
+        all_params.extend_from_slice(extra_params);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(all_params), |r| {
+            Ok(Hit {
+                id: r.get(0)?,
+                score: 0.0,
+            })
+        })?;
+        rows.filter_map(Result::ok).collect()
+    };
+    Ok(rows)
 }
 
 pub struct Prefix;
 
 impl SearchAlgorithm for Prefix {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
-        let rows = if let Some(upper) = prefix_upper_bound(q) {
-            let mut stmt =
-                conn.prepare("SELECT id FROM entries WHERE norm >= ?1 AND norm < ?2 LIMIT ?3")?;
-            let rows = stmt.query_map(params![q, upper, limit], |r| {
-                Ok(Hit {
-                    id: r.get(0)?,
-                    score: 0.0,
-                })
-            })?;
-            rows.filter_map(Result::ok).collect()
-        } else {
-            // No finite upper bound — just use >=.
-            let mut stmt = conn.prepare("SELECT id FROM entries WHERE norm >= ?1 LIMIT ?2")?;
-            let rows = stmt.query_map(params![q, limit], |r| {
-                Ok(Hit {
-                    id: r.get(0)?,
-                    score: 0.0,
-                })
-            })?;
-            rows.filter_map(Result::ok).collect()
-        };
-        Ok(rows)
+        let upper = prefix_upper_bound(q);
+        prefix_query(
+            conn,
+            q,
+            &upper,
+            "SELECT id FROM entries",
+            "LIMIT ?",
+            &[&limit as &dyn rusqlite::ToSql],
+        )
     }
 
     fn search_paged(
@@ -64,33 +89,20 @@ impl SearchAlgorithm for Prefix {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Hit>, SearchError> {
-        let rows = if let Some(upper) = prefix_upper_bound(q) {
-            let mut stmt = conn.prepare(
-                "SELECT id FROM entries WHERE norm >= ?1 AND norm < ?2 LIMIT ?3 OFFSET ?4",
-            )?;
-            let rows = stmt.query_map(params![q, upper, limit, offset], |r| {
-                Ok(Hit {
-                    id: r.get(0)?,
-                    score: 0.0,
-                })
-            })?;
-            rows.filter_map(Result::ok).collect()
-        } else {
-            let mut stmt =
-                conn.prepare("SELECT id FROM entries WHERE norm >= ?1 LIMIT ?2 OFFSET ?3")?;
-            let rows = stmt.query_map(params![q, limit, offset], |r| {
-                Ok(Hit {
-                    id: r.get(0)?,
-                    score: 0.0,
-                })
-            })?;
-            rows.filter_map(Result::ok).collect()
-        };
-        Ok(rows)
+        let upper = prefix_upper_bound(q);
+        prefix_query(
+            conn,
+            q,
+            &upper,
+            "SELECT id FROM entries",
+            "LIMIT ? OFFSET ?",
+            &[&limit as &dyn rusqlite::ToSql, &offset],
+        )
     }
 
     fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
-        let c: u64 = if let Some(upper) = prefix_upper_bound(q) {
+        let upper = prefix_upper_bound(q);
+        let c: u64 = if let Some(upper) = &upper {
             conn.query_row(
                 "SELECT COUNT(*) FROM entries WHERE norm >= ?1 AND norm < ?2",
                 params![q, upper],
@@ -137,8 +149,6 @@ mod tests {
 
     #[test]
     fn upper_bound_char_max() {
-        // char::MAX is U+10FFFF; the function should pop it and increment the
-        // previous character.
         let s = format!("a{}", char::MAX);
         assert_eq!(prefix_upper_bound(&s), Some("b".to_string()));
     }

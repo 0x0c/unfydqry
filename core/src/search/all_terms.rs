@@ -7,6 +7,15 @@ use rusqlite::{Connection, ToSql, params_from_iter};
 use super::{SearchAlgorithm, escape_like};
 use crate::engine::{Hit, SearchError};
 
+/// Builds the `WHERE` clause for n escaped terms:
+/// `norm LIKE '%'||?1||'%' ESCAPE '\' AND norm LIKE '%'||?2||'%' ESCAPE '\' ...`
+fn like_and_clause(n: usize) -> String {
+    (1..=n)
+        .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 pub struct AllTerms;
 
 impl SearchAlgorithm for AllTerms {
@@ -16,11 +25,7 @@ impl SearchAlgorithm for AllTerms {
             return Ok(Vec::new());
         }
 
-        // Build `norm LIKE '%'||?1||'%' ESCAPE '\' AND ...`.
-        let clause = (1..=escaped_terms.len())
-            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+        let clause = like_and_clause(escaped_terms.len());
         let sql = format!(
             "SELECT id FROM entries WHERE {clause} LIMIT ?{}",
             escaped_terms.len() + 1
@@ -51,10 +56,7 @@ impl SearchAlgorithm for AllTerms {
             return Ok(Vec::new());
         }
 
-        let clause = (1..=escaped_terms.len())
-            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+        let clause = like_and_clause(escaped_terms.len());
         let sql = format!(
             "SELECT id FROM entries WHERE {clause} LIMIT ?{} OFFSET ?{}",
             escaped_terms.len() + 1,
@@ -81,10 +83,7 @@ impl SearchAlgorithm for AllTerms {
             return Ok(0);
         }
 
-        let clause = (1..=escaped_terms.len())
-            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+        let clause = like_and_clause(escaped_terms.len());
         let sql = format!("SELECT COUNT(*) FROM entries WHERE {clause}");
 
         let binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();

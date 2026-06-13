@@ -10,7 +10,7 @@ pub struct TrigramBm25;
 impl SearchAlgorithm for TrigramBm25 {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
         // Trigram cannot match queries shorter than 3 chars → fall back to LIKE.
-        if q.chars().count() < 3 {
+        if q.chars().nth(2).is_none() {
             let escaped = escape_like(q);
             let mut stmt = conn.prepare(
                 "SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' ESCAPE '\\' LIMIT ?2",
