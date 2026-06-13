@@ -259,21 +259,12 @@ val page1 = engine.searchPage("とうきょう", 20u, 1u)
 
 page 0 は `search(query, perPage)` と同じ結果を返す。結果を超えたページは空リストを返す。
 
-### インデックス統計
+### インデックス管理
 
-`documentCount()` はインデックス内のドキュメント総数を返す。
-
-```swift
-// iOS
-let count = try engine.documentCount()
-```
-
-```kotlin
-// Android
-val count = engine.documentCount()
-```
-
-record-layer API を使用している場合、各フィールドが個別のドキュメントとして格納されるため、全レコードのフィールド数の合計が返る。
+| 呼び出し | 内容 |
+|---|---|
+| `documentCount()` | インデックス内のドキュメント総数を返す。record-layer API では各フィールドが個別のドキュメントとしてカウントされる。 |
+| `removeAll()` | インデックスの全ドキュメントを削除し、削除件数を返す。データリセットに便利。 |
 
 ## 複数フィールドのレコード(record-layer API)
 

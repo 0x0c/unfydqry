@@ -537,6 +537,17 @@ impl SearchEngine {
         Ok(())
     }
 
+    /// Removes all documents from the index. Returns the number of documents
+    /// removed.
+    pub fn remove_all(&self) -> Result<u64, SearchError> {
+        let conn = self.conn.lock().unwrap();
+        let count: u64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
+        conn.execute("DELETE FROM docs", [])?;
+        conn.execute("DELETE FROM entries", [])?;
+        drop(conn);
+        Ok(count)
+    }
+
     /// Searches the index and returns at most `limit` hits.
     ///
     /// The `query` is normalized with the engine's profile and then matched
@@ -2015,5 +2026,49 @@ mod tests {
             .unwrap();
         // Two fields = two entries in the index.
         assert_eq!(e.document_count().unwrap(), 2);
+    }
+
+    // --- remove_all ---
+
+    #[test]
+    fn remove_all_clears_index() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.index(2, "world".into()).unwrap();
+
+        let removed = e.remove_all().unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(e.document_count().unwrap(), 0);
+        assert!(e.search("hello".into(), 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_all_on_empty_index() {
+        let e = fresh();
+        assert_eq!(e.remove_all().unwrap(), 0);
+    }
+
+    #[test]
+    fn remove_all_clears_records() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello"), fv(1, "world")])
+            .unwrap();
+        e.index_record(2, vec![fv(0, "foo")]).unwrap();
+
+        let removed = e.remove_all().unwrap();
+        assert_eq!(removed, 3);
+        assert!(e.search_records("hello".into(), 10, 2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_all_allows_reindexing_after() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.remove_all().unwrap();
+        e.index(1, "world".into()).unwrap();
+
+        let hits = e.search("world".into(), 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, 1);
     }
 }
