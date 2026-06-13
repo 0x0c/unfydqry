@@ -59,5 +59,54 @@ fn bench_search(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_search);
+/// Pagination: fetch a page from the middle of the result set so the per-strategy
+/// offset path (SQL `LIMIT ? OFFSET ?` vs. the default fetch-and-drain) is exercised,
+/// not just the page-0 fast path that aliases plain `search`.
+fn bench_search_page(c: &mut Criterion) {
+    for &(strategy_name, strategy) in STRATEGIES {
+        let mut group = c.benchmark_group(format!("search_page/{strategy_name}"));
+        group.sample_size(50);
+
+        for &n in DOC_COUNTS {
+            let engine = build_engine(strategy, n);
+
+            group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+                let mut qi = 0;
+                b.iter(|| {
+                    let q = helpers::MEDIUM_QUERIES[qi % helpers::MEDIUM_QUERIES.len()];
+                    qi += 1;
+                    // 20 hits per page, third page (offset 40).
+                    engine.search_page(q.to_string(), 20, 2).unwrap()
+                });
+            });
+        }
+        group.finish();
+    }
+}
+
+/// Counting matches: SQL strategies answer with `SELECT COUNT(*)`, while the
+/// Rust-side fuzzy/edit-distance strategies fall back to a full matching pass —
+/// the gap between the two is the point of measuring this separately from `search`.
+fn bench_match_count(c: &mut Criterion) {
+    for &(strategy_name, strategy) in STRATEGIES {
+        let mut group = c.benchmark_group(format!("match_count/{strategy_name}"));
+        group.sample_size(50);
+
+        for &n in DOC_COUNTS {
+            let engine = build_engine(strategy, n);
+
+            group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+                let mut qi = 0;
+                b.iter(|| {
+                    let q = helpers::MEDIUM_QUERIES[qi % helpers::MEDIUM_QUERIES.len()];
+                    qi += 1;
+                    engine.match_count(q.to_string()).unwrap()
+                });
+            });
+        }
+        group.finish();
+    }
+}
+
+criterion_group!(benches, bench_search, bench_search_page, bench_match_count);
 criterion_main!(benches);
