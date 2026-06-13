@@ -648,6 +648,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_change_field_bits(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_contains(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_contains_record(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_document_count(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_highlight(
@@ -716,6 +720,10 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_change_field_bits(`ptr`: Long,`newFieldBits`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_unfydqry_fn_method_searchengine_contains(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_unfydqry_fn_method_searchengine_contains_record(`ptr`: Long,`recordId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     external fun uniffi_unfydqry_fn_method_searchengine_document_count(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_highlight(`ptr`: Long,`query`: RustBuffer.ByValue,`id`: Long,`before`: RustBuffer.ByValue,`after`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -885,6 +893,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_contains() != 16638.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_contains_record() != 13256.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_document_count() != 24388.toShort()) {
@@ -1433,6 +1447,21 @@ public interface SearchEngineInterface {
     fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong
     
     /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+    fun `contains`(`id`: kotlin.Long): kotlin.Boolean
+    
+    /**
+     * Returns whether any field of `record_id` exists in the index.
+     *
+     * This is the record-layer counterpart of `contains`: it checks whether
+     * any packed id in the record's range `[lo, hi]` exists in the `entries`
+     * table. Returns an error if `record_id` is out of range for the current
+     * `field_bits`.
+     */
+    fun `containsRecord`(`recordId`: kotlin.Long): kotlin.Boolean
+    
+    /**
      * Returns the total number of documents in the index.
      */
     fun `documentCount`(): kotlin.ULong
@@ -1685,6 +1714,45 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_change_field_bits(
         it,
         FfiConverterUByte.lower(`newFieldBits`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+    @Throws(SearchException::class)override fun `contains`(`id`: kotlin.Long): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_contains(
+        it,
+        FfiConverterLong.lower(`id`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns whether any field of `record_id` exists in the index.
+     *
+     * This is the record-layer counterpart of `contains`: it checks whether
+     * any packed id in the record's range `[lo, hi]` exists in the `entries`
+     * table. Returns an error if `record_id` is out of range for the current
+     * `field_bits`.
+     */
+    @Throws(SearchException::class)override fun `containsRecord`(`recordId`: kotlin.Long): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_contains_record(
+        it,
+        FfiConverterLong.lower(`recordId`),_status)
 }
     }
     )

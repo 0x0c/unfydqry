@@ -271,6 +271,7 @@ Page 0 returns the same results as `search(query, perPage)`. Pages beyond the re
 |---|---|
 | `documentCount()` | Returns the total number of documents in the index. With the record-layer API, each field counts as a separate document. |
 | `removeAll()` | Removes all documents from the index and returns the number removed. Useful for data resets. |
+| `contains(id)` | Returns whether a document with the given `id` exists in the index. |
 
 ## Multi-field records (record-layer API)
 

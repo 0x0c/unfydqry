@@ -549,6 +549,40 @@ impl SearchEngine {
         Ok(count)
     }
 
+    /// Returns whether a document with the given `id` exists in the index.
+    pub fn contains(&self, id: i64) -> Result<bool, SearchError> {
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id = ?1)",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(exists)
+    }
+
+    /// Returns whether any field of `record_id` exists in the index.
+    ///
+    /// This is the record-layer counterpart of `contains`: it checks whether
+    /// any packed id in the record's range `[lo, hi]` exists in the `entries`
+    /// table. Returns an error if `record_id` is out of range for the current
+    /// `field_bits`.
+    pub fn contains_record(&self, record_id: i64) -> Result<bool, SearchError> {
+        let bits = self.field_bits();
+        if !(0..=self.max_record_id()).contains(&record_id) {
+            return Err(SearchError::Db(format!(
+                "record_id {record_id} out of range for field_bits {bits}"
+            )));
+        }
+        let (lo, hi) = self.record_id_range(record_id);
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id BETWEEN ?1 AND ?2)",
+            params![lo, hi],
+            |r| r.get(0),
+        )?;
+        Ok(exists)
+    }
+
     /// Searches the index and returns at most `limit` hits.
     ///
     /// The `query` is normalized with the engine's profile and then matched
@@ -2071,5 +2105,77 @@ mod tests {
         let hits = e.search("world".into(), 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, 1);
+    }
+
+    // --- contains ---
+
+    #[test]
+    fn contains_returns_true_for_indexed_doc() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        assert!(e.contains(1).unwrap());
+    }
+
+    #[test]
+    fn contains_returns_false_for_missing_id() {
+        let e = fresh();
+        assert!(!e.contains(999).unwrap());
+    }
+
+    #[test]
+    fn contains_returns_false_after_remove() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.remove(1).unwrap();
+        assert!(!e.contains(1).unwrap());
+    }
+
+    #[test]
+    fn contains_works_with_record_layer() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+        let packed_id = 1i64 << e.field_bits();
+        assert!(e.contains(packed_id).unwrap());
+        assert!(!e.contains(packed_id + 1).unwrap());
+    }
+
+    // --- contains_record ---
+
+    #[test]
+    fn contains_record_returns_true_for_indexed_record() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello"), fv(1, "world")])
+            .unwrap();
+        assert!(e.contains_record(1).unwrap());
+    }
+
+    #[test]
+    fn contains_record_returns_false_for_missing_record() {
+        let e = fresh();
+        assert!(!e.contains_record(999).unwrap());
+    }
+
+    #[test]
+    fn contains_record_returns_false_after_remove_record() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+        e.remove_record(1).unwrap();
+        assert!(!e.contains_record(1).unwrap());
+    }
+
+    #[test]
+    fn contains_record_does_not_see_adjacent_record() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+        e.index_record(2, vec![fv(0, "world")]).unwrap();
+        e.remove_record(1).unwrap();
+        assert!(!e.contains_record(1).unwrap());
+        assert!(e.contains_record(2).unwrap());
+    }
+
+    #[test]
+    fn contains_record_rejects_out_of_range() {
+        let e = fresh();
+        assert!(matches!(e.contains_record(-1), Err(SearchError::Db(_))));
     }
 }

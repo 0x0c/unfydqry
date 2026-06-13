@@ -610,6 +610,21 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
     
     /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+    func contains(id: Int64) throws  -> Bool
+    
+    /**
+     * Returns whether any field of `record_id` exists in the index.
+     *
+     * This is the record-layer counterpart of `contains`: it checks whether
+     * any packed id in the record's range `[lo, hi]` exists in the `entries`
+     * table. Returns an error if `record_id` is out of range for the current
+     * `field_bits`.
+     */
+    func containsRecord(recordId: Int64) throws  -> Bool
+    
+    /**
      * Returns the total number of documents in the index.
      */
     func documentCount() throws  -> UInt64
@@ -880,6 +895,35 @@ open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
     uniffi_unfydqry_fn_method_searchengine_change_field_bits(
             self.uniffiCloneHandle(),
         FfiConverterUInt8.lower(newFieldBits),$0
+    )
+})
+}
+    
+    /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+open func contains(id: Int64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_contains(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(id),$0
+    )
+})
+}
+    
+    /**
+     * Returns whether any field of `record_id` exists in the index.
+     *
+     * This is the record-layer counterpart of `contains`: it checks whether
+     * any packed id in the record's range `[lo, hi]` exists in the `entries`
+     * table. Returns an error if `record_id` is out of range for the current
+     * `field_bits`.
+     */
+open func containsRecord(recordId: Int64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_contains_record(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(recordId),$0
     )
 })
 }
@@ -2320,6 +2364,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_contains() != 16638) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_contains_record() != 13256) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_document_count() != 24388) {
