@@ -680,6 +680,12 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func remove(id: Int64) throws 
     
     /**
+     * Removes all documents from the index. Returns the number of documents
+     * removed.
+     */
+    func removeAll() throws  -> UInt64
+    
+    /**
      * Removes every field of `record_id`. A no-op if none exist.
      */
     func removeRecord(recordId: Int64) throws 
@@ -995,6 +1001,18 @@ open func remove(id: Int64)throws   {try rustCallWithError(FfiConverterTypeSearc
         FfiConverterInt64.lower(id),$0
     )
 }
+}
+    
+    /**
+     * Removes all documents from the index. Returns the number of documents
+     * removed.
+     */
+open func removeAll()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_remove_all(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
     
     /**
@@ -2323,6 +2341,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_remove() != 29881) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_remove_all() != 61569) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442) {

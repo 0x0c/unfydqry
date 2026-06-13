@@ -662,6 +662,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_remove_all(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove_record(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_search(
@@ -728,6 +730,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_remove(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_unfydqry_fn_method_searchengine_remove_all(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_remove_record(`ptr`: Long,`recordId`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_search(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -902,6 +906,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove() != 29881.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_all() != 61569.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442.toShort()) {
@@ -1496,6 +1503,12 @@ public interface SearchEngineInterface {
     fun `remove`(`id`: kotlin.Long)
     
     /**
+     * Removes all documents from the index. Returns the number of documents
+     * removed.
+     */
+    fun `removeAll`(): kotlin.ULong
+    
+    /**
      * Removes every field of `record_id`. A no-op if none exist.
      */
     fun `removeRecord`(`recordId`: kotlin.Long)
@@ -1827,6 +1840,24 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 }
     }
     
+    
+
+    
+    /**
+     * Removes all documents from the index. Returns the number of documents
+     * removed.
+     */
+    @Throws(SearchException::class)override fun `removeAll`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_remove_all(
+        it,
+        _status)
+}
+    }
+    )
+    }
     
 
     

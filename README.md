@@ -265,21 +265,12 @@ val page1 = engine.searchPage("とうきょう", 20u, 1u)
 
 Page 0 returns the same results as `search(query, perPage)`. Pages beyond the result set return an empty list.
 
-### Index statistics
+### Index management
 
-`documentCount()` returns the total number of documents in the index.
-
-```swift
-// iOS
-let count = try engine.documentCount()
-```
-
-```kotlin
-// Android
-val count = engine.documentCount()
-```
-
-When using the record-layer API, each field is stored as a separate document, so the count reflects the total number of fields across all records.
+| Call | What it does |
+|---|---|
+| `documentCount()` | Returns the total number of documents in the index. With the record-layer API, each field counts as a separate document. |
+| `removeAll()` | Removes all documents from the index and returns the number removed. Useful for data resets. |
 
 ## Multi-field records (record-layer API)
 
