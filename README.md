@@ -245,6 +245,26 @@ val total = engine.matchCount("とうきょう")
 
 Returns `0` for empty or whitespace-only queries. For SQL-based strategies the count is computed with an efficient `SELECT COUNT(*)`; for the Rust-side fuzzy and edit-distance strategies it runs the full matching pass internally.
 
+### Pagination
+
+`searchPage(query, perPage, page)` returns a single page of results (0-indexed). Combine with `matchCount` to build paginated UIs.
+
+```swift
+// iOS
+let total = try engine.matchCount(query: "とうきょう")
+let page0 = try engine.searchPage(query: "とうきょう", perPage: 20, page: 0)
+let page1 = try engine.searchPage(query: "とうきょう", perPage: 20, page: 1)
+```
+
+```kotlin
+// Android
+val total = engine.matchCount("とうきょう")
+val page0 = engine.searchPage("とうきょう", 20u, 0u)
+val page1 = engine.searchPage("とうきょう", 20u, 1u)
+```
+
+Page 0 returns the same results as `search(query, perPage)`. Pages beyond the result set return an empty list.
+
 ## Multi-field records (record-layer API)
 
 `index` / `search` treat each `id` as a single text blob. When a record has several searchable fields — a contact's name, reading, and note, say — the **record-layer API** indexes each field separately while still returning one result per record, so a query can match *any* field and you learn *which* field matched.

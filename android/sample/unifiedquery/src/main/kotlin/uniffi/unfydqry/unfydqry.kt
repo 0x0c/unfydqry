@@ -664,6 +664,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_search(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_search_page(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_search_records(
     ): Short
     external fun uniffi_unfydqry_checksum_constructor_searchengine_new(
@@ -725,6 +727,8 @@ internal object UniffiLib {
     external fun uniffi_unfydqry_fn_method_searchengine_remove_record(`ptr`: Long,`recordId`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_search(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_unfydqry_fn_method_searchengine_search_page(`ptr`: Long,`query`: RustBuffer.ByValue,`perPage`: Int,`page`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_method_searchengine_search_records(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -897,6 +901,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_search() != 13991.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_search_page() != 60065.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653.toShort()) {
@@ -1492,6 +1499,15 @@ public interface SearchEngineInterface {
     fun `search`(`query`: kotlin.String, `limit`: kotlin.UInt): List<Hit>
     
     /**
+     * Returns up to `per_page` hits for the given `page` (0-indexed).
+     *
+     * Equivalent to `search` with an offset of `page * per_page`. Page 0 with
+     * a given `per_page` returns the same results as `search(query, per_page)`.
+     * Combine with `match_count` to compute the total number of pages.
+     */
+    fun `searchPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt): List<Hit>
+    
+    /**
      * Searches across record fields and returns at most `limit` records,
      * ranked by their best matching field (smallest score first).
      *
@@ -1816,6 +1832,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_search(
         it,
         FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns up to `per_page` hits for the given `page` (0-indexed).
+     *
+     * Equivalent to `search` with an offset of `page * per_page`. Page 0 with
+     * a given `per_page` returns the same results as `search(query, per_page)`.
+     * Combine with `match_count` to compute the total number of pages.
+     */
+    @Throws(SearchException::class)override fun `searchPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt): List<Hit> {
+            return FfiConverterSequenceTypeHit.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_search_page(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterUInt.lower(`perPage`),FfiConverterUInt.lower(`page`),_status)
 }
     }
     )
