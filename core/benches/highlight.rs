@@ -3,13 +3,11 @@ mod helpers;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use unfydqry::SearchEngine;
 
-const DOC_COUNTS: &[usize] = &[100, 1_000, 10_000];
-
 fn bench_highlight(c: &mut Criterion) {
     let mut group = c.benchmark_group("highlight");
     group.sample_size(50);
 
-    for &n in DOC_COUNTS {
+    for &n in &helpers::doc_counts() {
         let engine = SearchEngine::new(":memory:".to_string()).unwrap();
         let docs = helpers::generate_docs(n);
         for (i, doc) in docs.iter().enumerate() {

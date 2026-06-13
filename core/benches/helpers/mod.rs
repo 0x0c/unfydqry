@@ -72,6 +72,25 @@ impl Lcg {
     }
 }
 
+/// Document corpus sizes used across the corpus-scaled benchmarks.
+///
+/// Defaults to the full set. CI overrides it via `BENCH_DOC_COUNTS`
+/// (comma-separated, e.g. `100,1000`) to drop the heavy 10k tier and keep the
+/// run within a usable wall-clock time, while local runs stay full-fidelity.
+pub fn doc_counts() -> Vec<usize> {
+    match std::env::var("BENCH_DOC_COUNTS") {
+        Ok(s) if !s.trim().is_empty() => s
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse()
+                    .expect("BENCH_DOC_COUNTS must be comma-separated integers")
+            })
+            .collect(),
+        _ => vec![100, 1_000, 10_000],
+    }
+}
+
 /// Generates `n` deterministic documents, each containing 2-4 words from the
 /// fixed word list. The same `n` always produces the same documents.
 pub fn generate_docs(n: usize) -> Vec<String> {
@@ -95,3 +114,27 @@ pub const LONG_QUERIES: &[&str] = &[
     "情報検索 全文検索",
     "プログラム ネットワーク",
 ];
+
+/// Query-length variants the search benchmark sweeps over.
+///
+/// Defaults to all three lengths. CI overrides it via `BENCH_QUERY_LENS`
+/// (comma-separated subset of `short,medium,long`, e.g. `medium`) to trim the
+/// search matrix. This drops whole rows, not samples: every row that survives
+/// keeps its full `sample_size`, so per-row precision — and the regression
+/// signal — is unchanged. Local runs omit the var and stay full-fidelity.
+pub fn query_sets() -> Vec<(&'static str, &'static [&'static str])> {
+    let all: [(&'static str, &'static [&'static str]); 3] = [
+        ("short", SHORT_QUERIES),
+        ("medium", MEDIUM_QUERIES),
+        ("long", LONG_QUERIES),
+    ];
+    match std::env::var("BENCH_QUERY_LENS") {
+        Ok(s) if !s.trim().is_empty() => {
+            let wanted: Vec<&str> = s.split(',').map(str::trim).collect();
+            all.into_iter()
+                .filter(|(label, _)| wanted.contains(label))
+                .collect()
+        }
+        _ => all.to_vec(),
+    }
+}

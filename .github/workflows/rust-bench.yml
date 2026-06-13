@@ -5,6 +5,25 @@ on:
     paths:
       - "core/**"
       - ".github/workflows/rust-bench.yml"
+  # Push to the default branch primes the shared rust-cache (see `shared-key`
+  # below). GitHub Actions only lets a branch restore caches from its own
+  # history, the base branch, or the default branch — never a sibling PR
+  # branch. So without a cache built on main, every new PR branch's first run
+  # recompiles all dependencies (notably the bundled SQLite C amalgamation,
+  # the bulk of the ~14 min cold build) from scratch. Building once per merge
+  # to main lets every PR restore those compiled deps instead.
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - ".github/workflows/rust-bench.yml"
+  # GitHub evicts any cache not read for 7 days. If main goes quiet, the primed
+  # cache would disappear and PRs go cold again. Re-prime twice a week (max
+  # ~3-4 day gap) to stay comfortably inside that window — a strict 7-day cron
+  # would race the eviction. Scheduled runs fire only from the default branch,
+  # so this takes effect once merged to main.
+  schedule:
+    - cron: "0 6 * * 1,4"
   workflow_dispatch:
 
 # Only the latest run per PR matters; cancel superseded ones.
@@ -19,27 +38,38 @@ concurrency:
 permissions:
   contents: read
 
+# Shared across every job:
+# - CRITERION_ARGS: shorter measurement/warm-up than Criterion's defaults —
+#   shared CI runners are noisy, so this trades absolute precision for a usable
+#   wall-clock time. Enough to surface regressions, not to publish absolute
+#   numbers.
+# - BENCH_DOC_COUNTS: drops the heavy 10k corpus tier in CI (read by the bench
+#   helpers); local runs omit the var and keep the full set.
+# - BENCH_QUERY_LENS: trims the search bench's query-length sweep to one length
+#   in CI (read by the bench helpers). Drops whole rows, not samples — surviving
+#   rows keep full precision; local runs omit the var and sweep all lengths.
+# - BENCHES: the four Criterion (harness = false) bench targets, listed
+#   explicitly rather than via --benches so the libtest harness on the lib/bin
+#   targets — which doesn't understand --save-baseline — is never invoked.
+env:
+  CRITERION_ARGS: "--measurement-time 1 --warm-up-time 0.5"
+  BENCH_DOC_COUNTS: "100,1000"
+  BENCH_QUERY_LENS: "medium"
+  BENCHES: "--bench search --bench index --bench normalize --bench highlight"
+
 jobs:
-  bench-compare:
-    name: criterion compare (PR vs base)
+  # The PR head and the base commit are benched in parallel on separate runners,
+  # each compiling and benchmarking once, then a tiny compare job diffs the two
+  # saved baselines. This halves the wall-clock vs. benching both serially in one
+  # job (with a git checkout + recompile in between). The trade-off is that the
+  # two baselines come from different runners, so cross-machine noise is added on
+  # top of the usual CI noise — hence the "<10% is noise" disclaimer below.
+  bench-pr:
+    name: bench PR head
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    # Shorter measurement/warm-up than Criterion's defaults: shared CI runners
-    # are noisy, so this trades absolute precision for a usable wall-clock time.
-    # Enough to surface regressions, not to publish absolute numbers.
-    env:
-      CRITERION_ARGS: "--measurement-time 2 --warm-up-time 1"
-      # The four Criterion (harness = false) bench targets. Listed explicitly
-      # rather than via --benches so the libtest harness on the lib/bin targets
-      # — which doesn't understand --save-baseline — is never invoked.
-      BENCHES: "--bench search --bench index --bench normalize --bench highlight"
-
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          # Need the base commit available locally to bench it.
-          fetch-depth: 0
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -50,27 +80,106 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: core
+          # One shared cache scope across bench-pr, bench-base, and the main
+          # priming run — so a PR restores the deps compiled on main rather
+          # than rebuilding them. (Default keying segments per job name, which
+          # would give each job its own cold cache.)
+          shared-key: bench
 
-      - name: Install critcmp
-        run: cargo install critcmp --locked
-
-      # Bench the PR head first, saving a named baseline. Criterion writes
-      # baselines under core/target/criterion/, which survives the git checkout
-      # below since target/ is not tracked.
       - name: Bench PR
         working-directory: core
         run: cargo bench $BENCHES -- --save-baseline pr $CRITERION_ARGS
 
-      - name: Check out base commit
-        run: git checkout --force ${{ github.event.pull_request.base.sha }}
+      - name: Upload PR baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-pr
+          path: core/target/criterion
+          retention-days: 7
+
+  bench-base:
+    name: bench base commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The comparison only makes sense for PRs; workflow_dispatch has no base.
+    if: github.event_name == 'pull_request'
+    steps:
+      # The base commit is immutable, so its baseline only changes when the PR's
+      # target branch advances. Key the cache on base.sha: pushing new commits to
+      # the PR reuses it and skips the (re)compile + bench of the base entirely.
+      #
+      # Only base.sha varies here — the cache step runs before checkout, so
+      # hashFiles() can't see the repo, and cache keys reject commas (ruling out
+      # BENCH_DOC_COUNTS). Bump the trailing version token by hand whenever the
+      # bench config (CRITERION_ARGS / BENCH_DOC_COUNTS / BENCHES) changes, so a
+      # stale base baseline isn't reused against freshly-measured PR numbers.
+      - name: Restore base baseline cache
+        id: cache-base
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: core/target/criterion
+          key: criterion-base-${{ github.event.pull_request.base.sha }}-v3
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Install Rust stable
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: core
+          shared-key: bench
 
       # The base branch may predate the benchmarks (or a given bench). Don't fail
-      # the job in that case — we just won't have a baseline to compare against.
+      # the pipeline in that case — the compare job just won't find a baseline.
       - name: Bench base
-        id: bench_base
+        if: steps.cache-base.outputs.cache-hit != 'true'
         working-directory: core
         continue-on-error: true
         run: cargo bench $BENCHES -- --save-baseline base $CRITERION_ARGS
+
+      - name: Upload base baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-base
+          path: core/target/criterion
+          retention-days: 7
+          # Base predating the benches leaves no criterion output — that's fine.
+          if-no-files-found: ignore
+
+  compare:
+    name: criterion compare (PR vs base)
+    runs-on: ubuntu-latest
+    needs: [bench-pr, bench-base]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Download PR baseline
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: criterion-pr
+          path: core/target/criterion
+
+      # May be absent when the base predates the benches; tolerate it.
+      - name: Download base baseline
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: criterion-base
+          path: core/target/criterion
+
+      # Prebuilt binary — avoids compiling critcmp from source on every run.
+      - name: Install critcmp
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
+        with:
+          tool: critcmp
 
       - name: Build comparison report
         working-directory: core
@@ -79,9 +188,9 @@ jobs:
             echo "## Criterion benchmark comparison"
             echo ""
             echo "PR \`${{ github.event.pull_request.head.sha }}\` vs base \`${{ github.event.pull_request.base.sha }}\`."
-            echo "_Measured with \`$CRITERION_ARGS\` on a shared CI runner — treat small (<10%) deltas as noise._"
+            echo "_Measured with \`$CRITERION_ARGS\` (corpus sizes \`$BENCH_DOC_COUNTS\`, search query lengths \`$BENCH_QUERY_LENS\`) on shared CI runners — PR and base run on separate runners, so treat small (<10%) deltas as noise._"
             echo ""
-            if [ "${{ steps.bench_base.outcome }}" != "success" ]; then
+            if [ -z "$(find target/criterion -type d -name base -print -quit 2>/dev/null)" ]; then
               echo "> ⚠️ Could not benchmark the base commit (it may predate these benchmarks). No comparison available."
             else
               echo '```'

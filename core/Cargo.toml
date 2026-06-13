@@ -45,3 +45,13 @@ harness = false
 [[bench]]
 name = "highlight"
 harness = false
+
+# Parallelize codegen to speed up the (release-optimized) benchmark compile in
+# CI. Both the PR and the base build with this same profile, so the minor
+# optimization trade-off is consistent and doesn't skew the relative comparison.
+[profile.bench]
+codegen-units = 256
+# Drop symbols from the bench binaries — they aren't needed for the CI numbers
+# and it trims link time (and binary size). Override locally if you need to
+# profile a bench binary with symbols.
+strip = true

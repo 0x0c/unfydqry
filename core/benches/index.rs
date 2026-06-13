@@ -3,13 +3,11 @@ mod helpers;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use unfydqry::SearchEngine;
 
-const DOC_COUNTS: &[usize] = &[100, 1_000, 10_000];
-
 fn bench_bulk_index(c: &mut Criterion) {
     let mut group = c.benchmark_group("index/bulk");
     group.sample_size(20);
 
-    for &n in DOC_COUNTS {
+    for &n in &helpers::doc_counts() {
         let docs = helpers::generate_docs(n);
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &docs, |b, docs| {
@@ -50,7 +48,7 @@ fn bench_reindex(c: &mut Criterion) {
     let mut group = c.benchmark_group("reindex");
     group.sample_size(10);
 
-    for &n in DOC_COUNTS {
+    for &n in &helpers::doc_counts() {
         let docs = helpers::generate_docs(n);
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &docs, |b, docs| {

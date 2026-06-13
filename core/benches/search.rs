@@ -3,8 +3,6 @@ mod helpers;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use unfydqry::{EngineConfig, NormalizeProfile, SearchEngine, SearchStrategy};
 
-const DOC_COUNTS: &[usize] = &[100, 1_000, 10_000];
-
 const STRATEGIES: &[(&str, SearchStrategy)] = &[
     ("trigram_bm25", SearchStrategy::TrigramBm25),
     ("substring", SearchStrategy::Substring),
@@ -31,20 +29,17 @@ fn build_engine(strategy: SearchStrategy, n: usize) -> std::sync::Arc<SearchEngi
 }
 
 fn bench_search(c: &mut Criterion) {
-    let query_sets: &[(&str, &[&str])] = &[
-        ("short", helpers::SHORT_QUERIES),
-        ("medium", helpers::MEDIUM_QUERIES),
-        ("long", helpers::LONG_QUERIES),
-    ];
+    let query_sets = helpers::query_sets();
 
+    let doc_counts = helpers::doc_counts();
     for &(strategy_name, strategy) in STRATEGIES {
         let mut group = c.benchmark_group(format!("search/{strategy_name}"));
         group.sample_size(50);
 
-        for &n in DOC_COUNTS {
+        for &n in &doc_counts {
             let engine = build_engine(strategy, n);
 
-            for &(query_label, queries) in query_sets {
+            for &(query_label, queries) in &query_sets {
                 group.bench_with_input(BenchmarkId::new(query_label, n), &n, |b, _| {
                     let mut qi = 0;
                     b.iter(|| {
@@ -63,11 +58,12 @@ fn bench_search(c: &mut Criterion) {
 /// offset path (SQL `LIMIT ? OFFSET ?` vs. the default fetch-and-drain) is exercised,
 /// not just the page-0 fast path that aliases plain `search`.
 fn bench_search_page(c: &mut Criterion) {
+    let doc_counts = helpers::doc_counts();
     for &(strategy_name, strategy) in STRATEGIES {
         let mut group = c.benchmark_group(format!("search_page/{strategy_name}"));
         group.sample_size(50);
 
-        for &n in DOC_COUNTS {
+        for &n in &doc_counts {
             let engine = build_engine(strategy, n);
 
             group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
@@ -88,11 +84,12 @@ fn bench_search_page(c: &mut Criterion) {
 /// Rust-side fuzzy/edit-distance strategies fall back to a full matching pass —
 /// the gap between the two is the point of measuring this separately from `search`.
 fn bench_match_count(c: &mut Criterion) {
+    let doc_counts = helpers::doc_counts();
     for &(strategy_name, strategy) in STRATEGIES {
         let mut group = c.benchmark_group(format!("match_count/{strategy_name}"));
         group.sample_size(50);
 
-        for &n in DOC_COUNTS {
+        for &n in &doc_counts {
             let engine = build_engine(strategy, n);
 
             group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
