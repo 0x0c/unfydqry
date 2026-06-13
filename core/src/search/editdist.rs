@@ -110,14 +110,17 @@ pub fn word_fuzzy_search(
     let mut wchars: Vec<char> = Vec::new();
     for row in rows {
         let (id, norm) = row?;
-        let best = norm
-            .split_whitespace()
-            .filter_map(|w| {
-                wchars.clear();
-                wchars.extend(w.chars());
-                dist(&qchars, &wchars, threshold)
-            })
-            .min();
+        let mut best: Option<usize> = None;
+        for w in norm.split_whitespace() {
+            wchars.clear();
+            wchars.extend(w.chars());
+            if let Some(d) = dist(&qchars, &wchars, threshold) {
+                best = Some(best.map_or(d, |b: usize| b.min(d)));
+                if d == 0 {
+                    break;
+                }
+            }
+        }
         if let Some(best) = best {
             hits.push(Hit {
                 id,
