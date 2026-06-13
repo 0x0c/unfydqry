@@ -231,15 +231,36 @@ ANDROID_NDK_HOME=/path/to/ndk cargo ndk \
 
 ## Tests and sample
 
+Two test layers, mirroring the split on iOS/Android:
+
+| Layer | Location | Covers | Native artifacts |
+|---|---|---|---|
+| Dart unit (mock channel) | `flutter/test/` | the Dart codec half (arg encoding, result decoding) | none |
+| Integration (real device) | `flutter/example/integration_test/` | the full round trip: Dart → native glue (arg parsing, wire-name ↔ enum mapping, handle lifecycle, error codes) → Rust core → back | required |
+
 ```sh
 # Dart unit tests (mock method channel, no native artifacts required)
 cd flutter
 flutter test
 
+# Integration tests — drive the real plugin + Rust core on a device/emulator.
+# Build the native artifacts first (see "Building native artifacts"), then:
+cd flutter/example
+flutter test integration_test
+
 # Sample app (native artifacts must be built first)
 cd flutter/example
 flutter run
 ```
+
+CI runs the integration suite on an Android emulator via
+[`.github/workflows/flutter-integration-tests.yml`](../.github/workflows/flutter-integration-tests.yml),
+building the `.so` files with `cargo ndk` first. Its `paths-filter` includes
+`core/**` and `spec/**` (not just `flutter/**`) because, unlike the mock-channel
+unit tests, a core or spec change can change the integration outcome — the same
+reason the Swift/Kotlin workflows watch those paths. An equivalent iOS-simulator
+job is a planned follow-up (the same Dart suite runs unchanged once the
+XCFramework is built for the simulator).
 
 ## Namespace map
 

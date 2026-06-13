@@ -15,5 +15,12 @@ dependencies:
     path: ../
   path_provider: ^2.1.0
 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # Drives the real native plugin + Rust core on a device/emulator.
+  integration_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true

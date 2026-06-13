@@ -1,0 +1,116 @@
+name: Flutter Integration Tests
+
+on:
+  # Always trigger so the test check reports on every push/PR (required-check
+  # friendly). Path relevance is decided per-job below: when nothing relevant
+  # changed, the test job is skipped, which counts as a passing required check.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  changes:
+    name: detect relevant changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          # Unlike flutter-tests.yml (mock-channel Dart unit tests, which only
+          # depend on flutter/**), the integration test drives the real native
+          # plugin + Rust core, so a change to the core or the cross-platform
+          # spec can change its outcome. This mirrors the swift/kotlin filters.
+          filters: |
+            run:
+              - "core/**"
+              - "spec/**"
+              - "flutter/**"
+              - ".github/workflows/flutter-integration-tests.yml"
+
+  android-integration-test:
+    name: flutter test integration_test (Android emulator)
+    needs: changes
+    # workflow_dispatch has no diff to filter on, so always run when dispatched.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.run == 'true' }}
+    # ubuntu-latest exposes nested virtualization (KVM) for a hardware-accelerated
+    # x86_64 emulator; macOS runners do not.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust stable (Android targets)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+          # x86_64 for the emulator, arm64-v8a so the produced jniLibs also cover
+          # physical devices.
+          targets: x86_64-linux-android, aarch64-linux-android
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: core
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build Rust .so files into android/jniLibs
+        working-directory: core
+        # The Flutter Android plugin's build.gradle.kts adds ../../android/jniLibs
+        # to jniLibs.srcDirs, so JNA loads libunfydqry.so from there at runtime.
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: |
+          cargo ndk -t x86_64 -t arm64-v8a -o ../android/jniLibs build --release
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Regenerate the example's Android project scaffolding
+        # example/android is flutter-generated and gitignored (only lib/ is
+        # source), so recreate the platform host before building the test app.
+        working-directory: flutter/example
+        run: flutter create --platforms=android --project-name unfydqry_example .
+
+      - name: flutter pub get
+        working-directory: flutter/example
+        run: flutter pub get
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run integration tests on emulator
+        # Pinned by tag (the only action here not yet SHA-pinned); swap to a SHA
+        # when adopting it repo-wide.
+        uses: reactivecircus/android-emulator-runner@v2.34.0
+        with:
+          api-level: 29
+          arch: x86_64
+          target: default
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          working-directory: flutter/example
+          script: flutter test integration_test
