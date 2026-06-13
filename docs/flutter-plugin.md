@@ -91,7 +91,7 @@ final engine2 = await SearchEngine.openWithOptions(dbPath,
 
 // Preview the normalized form a query/document would be indexed under.
 final normalized = await SearchEngine.normalize('ＰＹＴＨＯＮ',
-    options: const NormalizeOptions.loose());  // → 'ｐｙｔｈｏｎ'
+    options: const NormalizeOptions.loose());  // → 'python'  (NFKC + lowercase folds to ASCII)
 
 // Does the stored index need regenerating for these options?
 final status = await SearchEngine.reindexStatus(dbPath,

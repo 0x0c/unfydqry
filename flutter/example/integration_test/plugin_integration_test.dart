@@ -91,12 +91,14 @@ void main() {
       });
     }
 
-    testWidgets('normalize loose lowercases full-width latin', (_) async {
+    testWidgets('normalize loose folds full-width latin to ascii', (_) async {
+      // Per spec/normalize.json `fullwidth_alpha_word`: loose runs NFKC +
+      // lowercase, so full-width Latin folds all the way to ASCII.
       final out = await SearchEngine.normalize(
         'ＰＹＴＨＯＮ',
         options: const NormalizeOptions.loose(),
       );
-      expect(out, 'ｐｙｔｈｏｎ');
+      expect(out, 'python');
     });
 
     testWidgets('reindexStatus maps native enum names back', (_) async {
