@@ -153,9 +153,14 @@ final class SearchModel: ObservableObject {
                     highlights: highlights(recordId: hit.recordId, slots: slots)
                 )
             }
+            // Total matching documents, unbounded by the result limit ("About N
+            // results" UI). This counts at the document (field/slot) layer, so it
+            // can exceed the record-row count when a record matches in several
+            // fields (e.g. both name and yomi).
+            let total = (try? engine.matchCount(query: query)) ?? 0
             // Results reflect the *applied* normalization until a reindex.
             let normalized = normalizeWithOptions(input: query, options: applied)
-            status = "hits: \(results.count)  normalized=\u{0022}\(normalized)\u{0022}"
+            status = "hits: \(results.count)  全マッチ文書: \(total)  normalized=\u{0022}\(normalized)\u{0022}"
         } catch {
             status = "error: \(error)"
             results = []

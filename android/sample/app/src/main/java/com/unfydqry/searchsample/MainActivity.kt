@@ -169,8 +169,13 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
         }
         results.clear()
         results.addAll(rows)
+        // Total matching documents, unbounded by the result limit ("About N
+        // results" UI). This counts at the document (field/slot) layer, so it can
+        // exceed the record-row count when a record matches in several fields
+        // (e.g. both name and yomi).
+        val total = engine.matchCount(query)
         // Results reflect the *applied* normalization until a reindex.
-        status = "hits: ${rows.size}  normalized=\"${normalizeWithOptions(query, applied)}\""
+        status = "hits: ${rows.size}  全マッチ文書: $total  normalized=\"${normalizeWithOptions(query, applied)}\""
     }
 
     // Toggling a step only detects whether a reindex is needed; it does not rebuild.
