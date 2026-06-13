@@ -648,6 +648,15 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func indexRecord(recordId: Int64, fields: [FieldValue]) throws 
     
     /**
+     * Returns the total number of documents matching `query`, without a limit.
+     *
+     * This is useful for displaying "About N results" in search UIs. The
+     * query is normalized the same way as `search`. Returns `0` for empty
+     * or whitespace-only queries.
+     */
+    func matchCount(query: String) throws  -> UInt64
+    
+    /**
      * Regenerates the index by re-normalizing every stored document's raw text
      * with this engine's current profile, then stamps that profile.
      *
@@ -915,6 +924,22 @@ open func indexRecord(recordId: Int64, fields: [FieldValue])throws   {try rustCa
         FfiConverterSequenceTypeFieldValue.lower(fields),$0
     )
 }
+}
+    
+    /**
+     * Returns the total number of documents matching `query`, without a limit.
+     *
+     * This is useful for displaying "About N results" in search UIs. The
+     * query is normalized the same way as `search`. Returns `0` for empty
+     * or whitespace-only queries.
+     */
+open func matchCount(query: String)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_match_count(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),$0
+    )
+})
 }
     
     /**
@@ -2243,6 +2268,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527) {

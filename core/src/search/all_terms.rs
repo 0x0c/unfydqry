@@ -38,4 +38,21 @@ impl SearchAlgorithm for AllTerms {
         })?;
         Ok(rows.filter_map(Result::ok).collect())
     }
+
+    fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
+        let escaped_terms: Vec<String> = q.split_whitespace().map(escape_like).collect();
+        if escaped_terms.is_empty() {
+            return Ok(0);
+        }
+
+        let clause = (1..=escaped_terms.len())
+            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let sql = format!("SELECT COUNT(*) FROM entries WHERE {clause}");
+
+        let binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
+        let c: u64 = conn.query_row(&sql, params_from_iter(binds), |r| r.get(0))?;
+        Ok(c)
+    }
 }
