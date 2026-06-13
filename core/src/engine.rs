@@ -539,12 +539,14 @@ impl SearchEngine {
 
     /// Removes all documents from the index. Returns the number of documents
     /// removed.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
     pub fn remove_all(&self) -> Result<u64, SearchError> {
         let conn = self.conn.lock().unwrap();
         let count: u64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
-        conn.execute("DELETE FROM docs", [])?;
-        conn.execute("DELETE FROM entries", [])?;
-        drop(conn);
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM docs", [])?;
+        tx.execute("DELETE FROM entries", [])?;
+        tx.commit()?;
         Ok(count)
     }
 
