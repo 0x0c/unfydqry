@@ -838,6 +838,16 @@ impl SearchEngine {
         after: String,
     ) -> Result<Option<String>, SearchError> {
         let bits = self.field_bits();
+        if !(0..=self.max_record_id()).contains(&record_id) {
+            return Err(SearchError::Db(format!(
+                "record_id {record_id} out of range for field_bits {bits}"
+            )));
+        }
+        if i64::from(slot) >= (1i64 << bits) {
+            return Err(SearchError::Db(format!(
+                "slot {slot} does not fit in field_bits {bits}"
+            )));
+        }
         let packed = (record_id << bits) | i64::from(slot);
         self.highlight(query, packed, before, after)
     }
@@ -871,7 +881,9 @@ impl SearchEngine {
         let offset = page.checked_mul(per_page).ok_or_else(|| {
             SearchError::Db(format!("page {page} * per_page {per_page} overflows u32"))
         })? as usize;
-        let total_limit = per_page.saturating_add(page.saturating_mul(per_page));
+        let total_limit = offset.checked_add(per_page as usize).ok_or_else(|| {
+            SearchError::Db(format!("offset {offset} + per_page {per_page} overflows"))
+        })? as u32;
         let mut all = self.search_records(query, total_limit, fields_per_record)?;
         let drain_to = offset.min(all.len());
         all.drain(..drain_to);
@@ -2321,5 +2333,28 @@ mod tests {
         for (a, p) in all.iter().zip(page0.iter()) {
             assert_eq!(a.record_id, p.record_id);
         }
+    }
+
+    #[test]
+    fn highlight_record_rejects_invalid_record_id() {
+        let e = fresh();
+        let err = e.highlight_record("x".into(), -1, 0, "[".into(), "]".into());
+        assert!(matches!(err, Err(SearchError::Db(_))));
+    }
+
+    #[test]
+    fn highlight_record_rejects_slot_beyond_field_bits() {
+        let e = engine_fb(2);
+        let err = e.highlight_record("x".into(), 1, 4, "[".into(), "]".into());
+        assert!(matches!(err, Err(SearchError::Db(_))));
+    }
+
+    #[test]
+    fn search_records_page_overflow_errors() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+
+        let err = e.search_records_page("hello".into(), u32::MAX, u32::MAX, 1);
+        assert!(matches!(err, Err(SearchError::Db(_))));
     }
 }
