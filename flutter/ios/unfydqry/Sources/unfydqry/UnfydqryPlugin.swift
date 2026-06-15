@@ -88,11 +88,30 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
                 try engine.index(id: id, text: text)
                 result(nil)
 
+            case "indexBatch":
+                guard let rawItems = args["items"] as? [[String: Any]] else {
+                    return result(badArgs("items:List required"))
+                }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let items = rawItems.compactMap { i -> IndexItem? in
+                    guard let id = int64(i["id"]), let text = i["text"] as? String else { return nil }
+                    return IndexItem(id: id, text: text)
+                }
+                result(Int(try engine.indexBatch(items: items)))
+
             case "remove":
                 guard let id = int64(args["id"]) else { return result(badArgs("id:Int required")) }
                 guard let engine = requireEngine(args, result: result) else { return }
                 try engine.remove(id: id)
                 result(nil)
+
+            case "removeBatch":
+                guard let rawIds = args["ids"] as? [Any] else {
+                    return result(badArgs("ids:List required"))
+                }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let ids = rawIds.compactMap { int64($0) }
+                result(Int(try engine.removeBatch(ids: ids)))
 
             case "search":
                 guard let query = args["query"] as? String else { return result(badArgs("query:String required")) }
@@ -112,6 +131,23 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
                 }
                 try engine.indexRecord(recordId: recordId, fields: fields)
                 result(nil)
+
+            case "indexRecordsBatch":
+                guard let rawRecords = args["records"] as? [[String: Any]] else {
+                    return result(badArgs("records:List required"))
+                }
+                guard let engine = requireEngine(args, result: result) else { return }
+                let records = rawRecords.compactMap { r -> RecordIndexItem? in
+                    guard let recordId = int64(r["recordId"]),
+                          let rawFields = r["fields"] as? [[String: Any]] else { return nil }
+                    let fields = rawFields.compactMap { f -> FieldValue? in
+                        guard let slot = (f["slot"] as? NSNumber)?.uint8Value,
+                              let text = f["text"] as? String else { return nil }
+                        return FieldValue(slot: slot, text: text)
+                    }
+                    return RecordIndexItem(recordId: recordId, fields: fields)
+                }
+                result(Int(try engine.indexRecordsBatch(records: records)))
 
             case "removeRecord":
                 guard let recordId = int64(args["recordId"]) else { return result(badArgs("recordId:Int required")) }

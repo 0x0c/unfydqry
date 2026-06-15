@@ -24,6 +24,9 @@ final class SearchModel: ObservableObject {
     /// True when the pending `options` differ from what the index was built with
     /// (detected via `reindexStatus`). Surfaced in the UI to prompt a reindex.
     @Published var needsReindex: Bool = false
+    /// Whether the `extraSeed` batch is currently indexed. Drives the
+    /// enabled/disabled state of the bulk add/remove buttons.
+    @Published var extraAdded: Bool = false
 
     private var engine: SearchEngine
     /// The engine packs `(record_id, slot)` into the document id it stores (and
@@ -100,16 +103,73 @@ final class SearchModel: ObservableObject {
             Record(id: 7, name: "データベース", yomi: "でーたべーす"),
             Record(id: 8, name: "プリンター", yomi: "ぷりんたー")
         ]
-        for record in seed {
-            // The engine packs (id, slot) internally; we pass our record id and
-            // a slot per field, and get record ids back from searchRecords.
-            try? engine.indexRecord(recordId: record.id, fields: [
+        // Seed every record in a single transaction with the batch API
+        // (`indexRecordsBatch`) instead of one `indexRecord` call per record.
+        // Each `RecordIndexItem` carries the host record id plus a `FieldValue`
+        // per slot — the engine packs (id, slot) internally and returns record
+        // ids from searchRecords. Validation is all-or-nothing: if any record is
+        // invalid, nothing is indexed.
+        let items = seed.map { record in
+            RecordIndexItem(recordId: record.id, fields: [
                 FieldValue(slot: RecordSlot.name.rawValue, text: record.name),
                 FieldValue(slot: RecordSlot.yomi.rawValue, text: record.yomi)
             ])
-            store[record.id] = record
         }
-        status = "indexed \(seed.count) records"
+        let indexed = (try? engine.indexRecordsBatch(records: items)) ?? 0
+        for record in seed { store[record.id] = record }
+        status = "indexed \(indexed) records"
+    }
+
+    /// A second set of records the bulk-add button indexes — and the bulk-remove
+    /// button removes — in one transaction, to demonstrate the batch APIs. Uses
+    /// ids distinct from `seed()`.
+    private static let extraSeed: [Record] = [
+        Record(id: 101, name: "横浜ランドマークタワー", yomi: "よこはまらんどまーくたわー"),
+        Record(id: 102, name: "通天閣", yomi: "つうてんかく"),
+        Record(id: 103, name: "金閣寺", yomi: "きんかくじ"),
+        Record(id: 104, name: "厳島神社", yomi: "いつくしまじんじゃ"),
+        Record(id: 105, name: "首里城", yomi: "しゅりじょう")
+    ]
+
+    /// Adds `extraSeed` in a single transaction via the record-layer batch API
+    /// (`indexRecordsBatch`), which returns the number of records indexed.
+    func addExtraBatch() {
+        do {
+            let items = Self.extraSeed.map { record in
+                RecordIndexItem(recordId: record.id, fields: [
+                    FieldValue(slot: RecordSlot.name.rawValue, text: record.name),
+                    FieldValue(slot: RecordSlot.yomi.rawValue, text: record.yomi)
+                ])
+            }
+            let indexed = try engine.indexRecordsBatch(records: items)
+            for record in Self.extraSeed { store[record.id] = record }
+            extraAdded = true
+            status = "一括追加: \(indexed) 件"
+            search()
+        } catch {
+            status = "batch add error: \(error)"
+        }
+    }
+
+    /// Removes `extraSeed` in a single transaction via `removeBatch`. That API
+    /// works at the packed document-id layer, so each record is expanded into
+    /// its `(recordId, slot)` ids (`recordId << fieldBits | slot`); the call
+    /// returns the number of document ids processed.
+    func removeExtraBatch() {
+        do {
+            let ids = Self.extraSeed.flatMap { record in
+                [RecordSlot.name.rawValue, RecordSlot.yomi.rawValue].map { slot in
+                    (record.id << Self.fieldBits) | Int64(slot)
+                }
+            }
+            let removed = try engine.removeBatch(ids: ids)
+            for record in Self.extraSeed { store.removeValue(forKey: record.id) }
+            extraAdded = false
+            status = "一括削除: \(removed) ドキュメント"
+            search()
+        } catch {
+            status = "batch remove error: \(error)"
+        }
     }
 
     /// Applies the pending `options` by regenerating the index in place from the

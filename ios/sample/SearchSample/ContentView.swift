@@ -65,13 +65,39 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                Text(model.status)
+                VStack(spacing: 6) {
+                    // Batch operations: add/remove a second set of records in one
+                    // transaction (indexRecordsBatch / removeBatch).
+                    HStack(spacing: 8) {
+                        Button {
+                            model.addExtraBatch()
+                        } label: {
+                            Label("一括追加", systemImage: "text.badge.plus")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.extraAdded)
+
+                        Button {
+                            model.removeExtraBatch()
+                        } label: {
+                            Label("一括削除", systemImage: "text.badge.minus")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!model.extraAdded)
+                    }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .background(.bar)
+
+                    Text(model.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                }
+                .padding(.vertical, 6)
+                .background(.bar)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView(model: model)

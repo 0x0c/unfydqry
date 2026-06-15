@@ -660,7 +660,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_index_batch(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index_record(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_index_records_batch(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_match_count(
     ): Short
@@ -671,6 +675,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_unfydqry_checksum_method_searchengine_remove(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove_all(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_remove_batch(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_remove_record(
     ): Short
@@ -738,8 +744,12 @@ external fun uniffi_unfydqry_fn_method_searchengine_highlight_record(`ptr`: Long
 ): RustBuffer.ByValue
 external fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Long,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_unfydqry_fn_method_searchengine_index_batch(`ptr`: Long,`items`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_unfydqry_fn_method_searchengine_index_record(`ptr`: Long,`recordId`: Long,`fields`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_unfydqry_fn_method_searchengine_index_records_batch(`ptr`: Long,`records`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_unfydqry_fn_method_searchengine_match_count(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_unfydqry_fn_method_searchengine_match_count_records(`ptr`: Long,`query`: RustBuffer.ByValue,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -749,6 +759,8 @@ external fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Long,uniffi_o
 external fun uniffi_unfydqry_fn_method_searchengine_remove(`ptr`: Long,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_unfydqry_fn_method_searchengine_remove_all(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_unfydqry_fn_method_searchengine_remove_batch(`ptr`: Long,`ids`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_unfydqry_fn_method_searchengine_remove_record(`ptr`: Long,`recordId`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -925,7 +937,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_index_batch() != 35946.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_index_records_batch() != 30654.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745.toShort()) {
@@ -941,6 +959,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_all() != 61569.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_batch() != 32238.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442.toShort()) {
@@ -1522,6 +1543,15 @@ public interface SearchEngineInterface {
     fun `index`(`id`: kotlin.Long, `text`: kotlin.String)
     
     /**
+     * Adds, or replaces, multiple documents in a single transaction.
+     *
+     * Semantically equivalent to calling `index` for each `(id, text)` pair,
+     * but wraps all writes in one transaction for significantly better
+     * throughput on large batches. Returns the number of documents processed.
+     */
+    fun `indexBatch`(`items`: List<IndexItem>): kotlin.ULong
+    
+    /**
      * Adds, or replaces, the whole record `record_id`, made of multiple
      * fields.
      *
@@ -1532,6 +1562,17 @@ public interface SearchEngineInterface {
      * `< 2^field_bits`, otherwise an error is returned and nothing is written.
      */
     fun `indexRecord`(`recordId`: kotlin.Long, `fields`: List<FieldValue>)
+    
+    /**
+     * Adds, or replaces, multiple records in a single transaction.
+     *
+     * Semantically equivalent to calling `index_record` for each item, but
+     * wraps all writes in one transaction for significantly better throughput.
+     * All-or-nothing: if any `record_id` or `slot` is invalid, no records are
+     * written and an error is returned. Returns the number of records
+     * processed.
+     */
+    fun `indexRecordsBatch`(`records`: List<RecordIndexItem>): kotlin.ULong
     
     /**
      * Returns the total number of documents matching `query`, without a limit.
@@ -1575,6 +1616,15 @@ public interface SearchEngineInterface {
      * removed.
      */
     fun `removeAll`(): kotlin.ULong
+    
+    /**
+     * Removes multiple documents by id in a single transaction.
+     *
+     * Semantically equivalent to calling `remove` for each id, but wraps all
+     * deletes in one transaction. Missing ids are silently skipped. Returns
+     * the number of ids processed.
+     */
+    fun `removeBatch`(`ids`: List<kotlin.Long>): kotlin.ULong
     
     /**
      * Removes every field of `record_id`. A no-op if none exist.
@@ -1895,6 +1945,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 
     
     /**
+     * Adds, or replaces, multiple documents in a single transaction.
+     *
+     * Semantically equivalent to calling `index` for each `(id, text)` pair,
+     * but wraps all writes in one transaction for significantly better
+     * throughput on large batches. Returns the number of documents processed.
+     */
+    @Throws(SearchException::class)override fun `indexBatch`(`items`: List<IndexItem>): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_index_batch(
+        it,
+        FfiConverterSequenceTypeIndexItem.lower(`items`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Adds, or replaces, the whole record `record_id`, made of multiple
      * fields.
      *
@@ -1914,6 +1985,29 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 }
     }
     
+    
+
+    
+    /**
+     * Adds, or replaces, multiple records in a single transaction.
+     *
+     * Semantically equivalent to calling `index_record` for each item, but
+     * wraps all writes in one transaction for significantly better throughput.
+     * All-or-nothing: if any `record_id` or `slot` is invalid, no records are
+     * written and an error is returned. Returns the number of records
+     * processed.
+     */
+    @Throws(SearchException::class)override fun `indexRecordsBatch`(`records`: List<RecordIndexItem>): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_index_records_batch(
+        it,
+        FfiConverterSequenceTypeRecordIndexItem.lower(`records`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -2012,6 +2106,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_remove_all(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Removes multiple documents by id in a single transaction.
+     *
+     * Semantically equivalent to calling `remove` for each id, but wraps all
+     * deletes in one transaction. Missing ids are silently skipped. Returns
+     * the number of ids processed.
+     */
+    @Throws(SearchException::class)override fun `removeBatch`(`ids`: List<kotlin.Long>): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_remove_batch(
+        it,
+        FfiConverterSequenceLong.lower(`ids`),_status)
 }
     }
     )
@@ -2466,6 +2581,53 @@ public object FfiConverterTypeHit: FfiConverterRustBuffer<Hit> {
 
 
 /**
+ * An `(id, text)` pair for the batch-indexing API (`index_batch`).
+ */
+data class IndexItem (
+    /**
+     * The id to index the document under (same semantics as `index`).
+     */
+    var `id`: kotlin.Long
+    , 
+    /**
+     * Raw text; the engine normalizes it the same way as `index`.
+     */
+    var `text`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeIndexItem: FfiConverterRustBuffer<IndexItem> {
+    override fun read(buf: ByteBuffer): IndexItem {
+        return IndexItem(
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: IndexItem) = (
+            FfiConverterLong.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`text`)
+    )
+
+    override fun write(value: IndexItem, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`id`, buf)
+            FfiConverterString.write(value.`text`, buf)
+    }
+}
+
+
+
+/**
  * A composable set of normalization steps, all opt-in on top of NFKC.
  *
  * The engine applies the enabled steps in a fixed canonical order (see
@@ -2619,6 +2781,54 @@ public object FfiConverterTypeRecordHit: FfiConverterRustBuffer<RecordHit> {
             FfiConverterLong.write(value.`recordId`, buf)
             FfiConverterDouble.write(value.`score`, buf)
             FfiConverterByteArray.write(value.`matchedSlots`, buf)
+    }
+}
+
+
+
+/**
+ * A `(record_id, fields)` pair for the batch record-indexing API
+ * (`index_records_batch`).
+ */
+data class RecordIndexItem (
+    /**
+     * The host record id (same semantics as `index_record`).
+     */
+    var `recordId`: kotlin.Long
+    , 
+    /**
+     * The fields to store for this record.
+     */
+    var `fields`: List<FieldValue>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRecordIndexItem: FfiConverterRustBuffer<RecordIndexItem> {
+    override fun read(buf: ByteBuffer): RecordIndexItem {
+        return RecordIndexItem(
+            FfiConverterLong.read(buf),
+            FfiConverterSequenceTypeFieldValue.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RecordIndexItem) = (
+            FfiConverterLong.allocationSize(value.`recordId`) +
+            FfiConverterSequenceTypeFieldValue.allocationSize(value.`fields`)
+    )
+
+    override fun write(value: RecordIndexItem, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`recordId`, buf)
+            FfiConverterSequenceTypeFieldValue.write(value.`fields`, buf)
     }
 }
 
@@ -2991,6 +3201,34 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterSequenceLong: FfiConverterRustBuffer<List<kotlin.Long>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Long> {
+        val len = buf.getInt()
+        return List<kotlin.Long>(len) {
+            FfiConverterLong.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Long>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterLong.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Long>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterLong.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFieldValue: FfiConverterRustBuffer<List<FieldValue>> {
     override fun read(buf: ByteBuffer): List<FieldValue> {
         val len = buf.getInt()
@@ -3047,6 +3285,34 @@ public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeIndexItem: FfiConverterRustBuffer<List<IndexItem>> {
+    override fun read(buf: ByteBuffer): List<IndexItem> {
+        val len = buf.getInt()
+        return List<IndexItem>(len) {
+            FfiConverterTypeIndexItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<IndexItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeIndexItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<IndexItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeIndexItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer<List<RecordHit>> {
     override fun read(buf: ByteBuffer): List<RecordHit> {
         val len = buf.getInt()
@@ -3065,6 +3331,34 @@ public object FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer<List<Rec
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeRecordHit.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRecordIndexItem: FfiConverterRustBuffer<List<RecordIndexItem>> {
+    override fun read(buf: ByteBuffer): List<RecordIndexItem> {
+        val len = buf.getInt()
+        return List<RecordIndexItem>(len) {
+            FfiConverterTypeRecordIndexItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RecordIndexItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRecordIndexItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RecordIndexItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRecordIndexItem.write(it, buf)
         }
     }
 }

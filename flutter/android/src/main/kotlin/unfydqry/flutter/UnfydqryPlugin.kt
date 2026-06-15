@@ -26,7 +26,9 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import uniffi.unfydqry.EngineOptionsConfig
 import uniffi.unfydqry.FieldValue
+import uniffi.unfydqry.IndexItem
 import uniffi.unfydqry.NormalizeOptions
+import uniffi.unfydqry.RecordIndexItem
 import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.SearchException
 import uniffi.unfydqry.SearchStrategy
@@ -109,11 +111,31 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
                     result.success(null)
                 }
 
+                "indexBatch" -> {
+                    val rawItems = call.argument<List<Map<String, Any>>>("items")
+                        ?: return result.badArgs("items:List required")
+                    val engine = engine(call, result) ?: return
+                    val items = rawItems.mapNotNull { i ->
+                        val id = (i["id"] as? Number)?.toLong() ?: return@mapNotNull null
+                        val text = i["text"] as? String ?: return@mapNotNull null
+                        IndexItem(id = id, text = text)
+                    }
+                    result.success(engine.indexBatch(items = items).toLong())
+                }
+
                 "remove" -> {
                     val id = call.longArg("id") ?: return result.badArgs("id:Int required")
                     val engine = engine(call, result) ?: return
                     engine.remove(id = id)
                     result.success(null)
+                }
+
+                "removeBatch" -> {
+                    val rawIds = call.argument<List<Any>>("ids")
+                        ?: return result.badArgs("ids:List required")
+                    val engine = engine(call, result) ?: return
+                    val ids = rawIds.mapNotNull { (it as? Number)?.toLong() }
+                    result.success(engine.removeBatch(ids = ids).toLong())
                 }
 
                 "search" -> {
@@ -139,6 +161,24 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
                     }
                     engine.indexRecord(recordId = recordId, fields = fields)
                     result.success(null)
+                }
+
+                "indexRecordsBatch" -> {
+                    val rawRecords = call.argument<List<Map<String, Any>>>("records")
+                        ?: return result.badArgs("records:List required")
+                    val engine = engine(call, result) ?: return
+                    val records = rawRecords.mapNotNull { r ->
+                        val recordId = (r["recordId"] as? Number)?.toLong() ?: return@mapNotNull null
+                        @Suppress("UNCHECKED_CAST")
+                        val rawFields = r["fields"] as? List<Map<String, Any>> ?: return@mapNotNull null
+                        val fields = rawFields.mapNotNull { f ->
+                            val slot = (f["slot"] as? Number)?.toInt() ?: return@mapNotNull null
+                            val text = f["text"] as? String ?: return@mapNotNull null
+                            FieldValue(slot = slot.toUByte(), text = text)
+                        }
+                        RecordIndexItem(recordId = recordId, fields = fields)
+                    }
+                    result.success(engine.indexRecordsBatch(records = records).toLong())
                 }
 
                 "removeRecord" -> {
