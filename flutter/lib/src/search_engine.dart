@@ -2,8 +2,10 @@ import 'package:flutter/services.dart';
 
 import 'field_value.dart';
 import 'hit.dart';
+import 'index_item.dart';
 import 'normalize_options.dart';
 import 'record_hit.dart';
+import 'record_index_item.dart';
 import 'reindex_status.dart';
 import 'search_exception.dart';
 import 'search_strategy.dart';
@@ -112,6 +114,20 @@ class SearchEngine {
     );
   }
 
+  /// Indexes (or re-indexes) every item in [items] in a single transaction.
+  ///
+  /// Semantically equivalent to calling [index] for each item, but far faster on
+  /// large batches because all writes share one transaction. Returns the number
+  /// of documents processed.
+  Future<int> indexBatch(List<IndexItem> items) async {
+    _checkAlive();
+    final n = await _channel.invokeMethod<int>('indexBatch', {
+      'handle': _handle,
+      'items': items.map((i) => i.toMap()).toList(),
+    });
+    return n ?? 0;
+  }
+
   /// Removes the entry with [id] from the index.
   Future<void> remove(int id) {
     _checkAlive();
@@ -119,6 +135,20 @@ class SearchEngine {
       'remove',
       {'handle': _handle, 'id': id},
     );
+  }
+
+  /// Removes every id in [ids] from the index in a single transaction.
+  ///
+  /// Semantically equivalent to calling [remove] for each id, but wraps all
+  /// deletes in one transaction. Missing ids are silently skipped. Returns the
+  /// number of ids processed.
+  Future<int> removeBatch(List<int> ids) async {
+    _checkAlive();
+    final n = await _channel.invokeMethod<int>('removeBatch', {
+      'handle': _handle,
+      'ids': ids,
+    });
+    return n ?? 0;
   }
 
   /// Searches for [query], returning at most [limit] results ordered by relevance.
@@ -153,6 +183,21 @@ class SearchEngine {
       'recordId': recordId,
       'fields': fields.map((f) => f.toMap()).toList(),
     });
+  }
+
+  /// Indexes (or re-indexes) every record in [records] in a single transaction.
+  ///
+  /// Semantically equivalent to calling [indexRecord] for each item, but wraps
+  /// all writes in one transaction for much better throughput. Validation is
+  /// all-or-nothing: if any record id or slot is invalid, nothing is indexed
+  /// and a [SearchException] is thrown. Returns the number of records processed.
+  Future<int> indexRecordsBatch(List<RecordIndexItem> records) async {
+    _checkAlive();
+    final n = await _channel.invokeMethod<int>('indexRecordsBatch', {
+      'handle': _handle,
+      'records': records.map((r) => r.toMap()).toList(),
+    });
+    return n ?? 0;
   }
 
   /// Removes every field of [recordId] from the index.

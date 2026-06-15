@@ -25,6 +25,12 @@ void main() {
           case 'remove':
           case 'dispose':
             return null;
+          case 'indexBatch':
+            return (call.arguments['items'] as List).length;
+          case 'removeBatch':
+            return (call.arguments['ids'] as List).length;
+          case 'indexRecordsBatch':
+            return (call.arguments['records'] as List).length;
           case 'search':
             return [
               {'id': 1, 'score': -1.521},
@@ -82,6 +88,64 @@ void main() {
       final call = log.last;
       expect(call.method, 'remove');
       expect(call.arguments['id'], 7);
+      await engine.dispose();
+    });
+  });
+
+  group('SearchEngine.indexBatch', () {
+    test('forwards items as id/text maps and returns the count', () async {
+      final engine = await SearchEngine.open('/tmp/db.sqlite');
+      final n = await engine.indexBatch(const [
+        IndexItem(id: 1, text: 'a'),
+        IndexItem(id: 2, text: 'b'),
+      ]);
+
+      final call = log.last;
+      expect(call.method, 'indexBatch');
+      expect(call.arguments['items'], [
+        {'id': 1, 'text': 'a'},
+        {'id': 2, 'text': 'b'},
+      ]);
+      expect(n, 2);
+      await engine.dispose();
+    });
+  });
+
+  group('SearchEngine.removeBatch', () {
+    test('forwards the id list and returns the count', () async {
+      final engine = await SearchEngine.open('/tmp/db.sqlite');
+      final n = await engine.removeBatch([3, 4, 5]);
+
+      final call = log.last;
+      expect(call.method, 'removeBatch');
+      expect(call.arguments['ids'], [3, 4, 5]);
+      expect(n, 3);
+      await engine.dispose();
+    });
+  });
+
+  group('SearchEngine.indexRecordsBatch', () {
+    test('forwards records as recordId/fields maps and returns the count', () async {
+      final engine = await SearchEngine.open('/tmp/db.sqlite');
+      final n = await engine.indexRecordsBatch(const [
+        RecordIndexItem(recordId: 1, fields: [
+          FieldValue(slot: 0, text: '東京タワー'),
+          FieldValue(slot: 1, text: 'とうきょうたわー'),
+        ]),
+      ]);
+
+      final call = log.last;
+      expect(call.method, 'indexRecordsBatch');
+      expect(call.arguments['records'], [
+        {
+          'recordId': 1,
+          'fields': [
+            {'slot': 0, 'text': '東京タワー'},
+            {'slot': 1, 'text': 'とうきょうたわー'},
+          ],
+        },
+      ]);
+      expect(n, 1);
       await engine.dispose();
     });
   });
@@ -151,6 +215,9 @@ void main() {
       expect(() => engine.index(1, 't'), throwsStateError);
       expect(() => engine.remove(1), throwsStateError);
       expect(() => engine.search('q'), throwsStateError);
+      expect(() => engine.indexBatch(const []), throwsStateError);
+      expect(() => engine.removeBatch(const []), throwsStateError);
+      expect(() => engine.indexRecordsBatch(const []), throwsStateError);
     });
   });
 

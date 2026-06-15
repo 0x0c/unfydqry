@@ -1,7 +1,9 @@
 export 'src/field_value.dart';
 export 'src/hit.dart';
+export 'src/index_item.dart';
 export 'src/normalize_options.dart';
 export 'src/record_hit.dart';
+export 'src/record_index_item.dart';
 export 'src/reindex_status.dart';
 export 'src/search_engine.dart';
 export 'src/search_exception.dart';
