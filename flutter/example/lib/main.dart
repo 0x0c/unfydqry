@@ -45,6 +45,17 @@ const _seed = <SeedRecord>[
   (id: 8, name: 'プリンター', yomi: 'ぷりんたー'),
 ];
 
+/// A second set of records the "一括追加" button adds — and the "一括削除"
+/// button removes — in one transaction, to demonstrate the batch APIs
+/// (`indexRecordsBatch` / `removeBatch`). Distinct ids from [_seed].
+const _extraSeed = <SeedRecord>[
+  (id: 101, name: '横浜ランドマークタワー', yomi: 'よこはまらんどまーくたわー'),
+  (id: 102, name: '通天閣', yomi: 'つうてんかく'),
+  (id: 103, name: '金閣寺', yomi: 'きんかくじ'),
+  (id: 104, name: '厳島神社', yomi: 'いつくしまじんじゃ'),
+  (id: 105, name: '首里城', yomi: 'しゅりじょう'),
+];
+
 /// One normalization step toggle, bound to a field of [NormalizeOptions].
 typedef StepToggle = ({
   String label,
@@ -161,11 +172,15 @@ class _SearchPageState extends State<SearchPage> {
 
   String _status = 'initializing…';
   List<ResultRow> _results = const [];
-  late final Map<int, SeedRecord> _byId = {for (final d in _seed) d.id: d};
+  // The currently-indexed records, keyed by id. Starts as [_seed]; the batch
+  // buttons add/remove [_extraSeed] from both the engine and this map.
+  final Map<int, SeedRecord> _records = {for (final d in _seed) d.id: d};
+  // Whether [_extraSeed] is currently indexed (drives the batch buttons).
+  bool _extraAdded = false;
 
   // All records as rows, used when the query is empty.
   List<ResultRow> get _allRows =>
-      (_seed.toList()..sort((a, b) => a.id.compareTo(b.id)))
+      (_records.values.toList()..sort((a, b) => a.id.compareTo(b.id)))
           .map((r) => (
                 record: r,
                 matchedSlots: const <int>[],
@@ -189,14 +204,17 @@ class _SearchPageState extends State<SearchPage> {
       options: _applied,
       strategy: _strategy,
     );
-    for (final doc in _seed) {
-      // Each record is indexed as multiple fields; the engine packs
-      // (recordId, slot) internally and returns recordIds from searchRecords.
-      await engine.indexRecord(doc.id, [
-        FieldValue(slot: _slotName, text: doc.name),
-        FieldValue(slot: _slotYomi, text: doc.yomi),
-      ]);
-    }
+    // Seed every record in one transaction with the batch API
+    // (indexRecordsBatch) instead of an indexRecord call per record. Each
+    // RecordIndexItem is one record's fields; the engine packs (recordId, slot)
+    // internally and returns recordIds from searchRecords.
+    await engine.indexRecordsBatch([
+      for (final doc in _seed)
+        RecordIndexItem(recordId: doc.id, fields: [
+          FieldValue(slot: _slotName, text: doc.name),
+          FieldValue(slot: _slotYomi, text: doc.yomi),
+        ]),
+    ]);
     if (!mounted) {
       await engine.dispose();
       return;
@@ -224,7 +242,7 @@ class _SearchPageState extends State<SearchPage> {
     final hits = await engine.searchRecords(query, fieldsPerRecord: _fieldCount);
     final rows = <ResultRow>[];
     for (final h in hits) {
-      final record = _byId[h.recordId];
+      final record = _records[h.recordId];
       if (record == null) continue;
       rows.add((
         record: record,
@@ -239,6 +257,54 @@ class _SearchPageState extends State<SearchPage> {
       _results = rows;
       _status = 'hits: ${rows.length}  normalized="$normalized"';
     });
+  }
+
+  /// Adds [_extraSeed] in a single transaction via the record-layer batch API
+  /// (`indexRecordsBatch`). The call returns the number of records indexed.
+  Future<void> _addExtraBatch() async {
+    final engine = _engine;
+    if (engine == null) return;
+    final indexed = await engine.indexRecordsBatch([
+      for (final r in _extraSeed)
+        RecordIndexItem(recordId: r.id, fields: [
+          FieldValue(slot: _slotName, text: r.name),
+          FieldValue(slot: _slotYomi, text: r.yomi),
+        ]),
+    ]);
+    for (final r in _extraSeed) {
+      _records[r.id] = r;
+    }
+    if (!mounted) return;
+    setState(() {
+      _extraAdded = true;
+      _status = '一括追加: $indexed 件';
+    });
+    await _runSearch();
+  }
+
+  /// Removes [_extraSeed] in a single transaction via `removeBatch`. That API
+  /// works at the packed document-id layer, so each record is expanded into its
+  /// `(recordId, slot)` ids (`recordId << fieldBits | slot`). The call returns
+  /// the number of document ids processed (here: 2 fields × record count).
+  Future<void> _removeExtraBatch() async {
+    final engine = _engine;
+    if (engine == null) return;
+    final ids = <int>[
+      for (final r in _extraSeed) ...[
+        (r.id << _fieldBits) | _slotName,
+        (r.id << _fieldBits) | _slotYomi,
+      ],
+    ];
+    final removed = await engine.removeBatch(ids);
+    for (final r in _extraSeed) {
+      _records.remove(r.id);
+    }
+    if (!mounted) return;
+    setState(() {
+      _extraAdded = false;
+      _status = '一括削除: $removed ドキュメント';
+    });
+    await _runSearch();
   }
 
   /// Asks the engine to highlight [query] within each matched field of
@@ -397,6 +463,28 @@ class _SearchPageState extends State<SearchPage> {
             ),
             const SizedBox(height: 4),
             Text(_status, style: theme.textTheme.bodySmall),
+            const SizedBox(height: 8),
+            // Batch operations: add/remove a second set of records in one
+            // transaction (indexRecordsBatch / removeBatch).
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: _engine == null || _extraAdded ? null : _addExtraBatch,
+                    icon: const Icon(Icons.playlist_add),
+                    label: Text('一括追加 (+${_extraSeed.length})'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _engine == null || !_extraAdded ? null : _removeExtraBatch,
+                    icon: const Icon(Icons.playlist_remove),
+                    label: const Text('一括削除'),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Expanded(
               child: ListView.builder(

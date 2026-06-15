@@ -272,6 +272,8 @@ Page 0 returns the same results as `search(query, perPage)`. Pages beyond the re
 | `documentCount()` | Returns the total number of documents in the index. With the record-layer API, each field counts as a separate document. |
 | `removeAll()` | Removes all documents from the index and returns the number removed. Useful for data resets. |
 | `contains(id)` | Returns whether a document with the given `id` exists in the index. |
+| `indexBatch([IndexItem(id, text), …])` | Indexes many `(id, text)` documents in a single transaction — far faster than calling `index` per item on large batches. Returns the number processed. |
+| `removeBatch([id, …])` | Removes many ids in a single transaction; missing ids are skipped. Returns the number processed. |
 
 ## Multi-field records (record-layer API)
 
@@ -282,6 +284,7 @@ It is a thin layer over the same index: the engine packs `(record_id, slot)` int
 | Call | What it does |
 |---|---|
 | `indexRecord(recordId, [FieldValue(slot, text), …])` | Upsert a whole record. Fields that are empty once normalized are dropped; re-indexing the same `recordId` fully replaces it. Duplicate slots in one call are rejected. |
+| `indexRecordsBatch([RecordIndexItem(recordId, [FieldValue(slot, text), …]), …])` | Upsert many records in a single transaction. All-or-nothing: if any `recordId` or `slot` is invalid, nothing is indexed. Returns the number processed. |
 | `searchRecords(query, limit, fieldsPerRecord)` | Search across fields; returns at most `limit` `RecordHit`s ranked by each record's best (smallest-score) matching field. `fieldsPerRecord` is the host's field count, used only as an over-fetch hint. |
 | `removeRecord(recordId)` | Remove every field of a record. |
 | `changeFieldBits(newFieldBits)` | Re-pack the whole index to a new `field_bits` (see below). |
@@ -355,15 +358,20 @@ two platforms can be eyeballed side by side:
 
 - A standard search field with **incremental search** (debounced ~150 ms); an
   empty query lists every seeded record.
-- **Multi-field records** indexed with `indexRecord` (a name + reading per
-  record) and queried with `searchRecords`; each result row shows which field
-  matched, demonstrating the record-layer API.
+- **Multi-field records** seeded in one transaction with `indexRecordsBatch` (a
+  name + reading per record) and queried with `searchRecords`; each result row
+  shows which field matched, demonstrating the record-layer API.
+- **Batch operations**: 一括追加 / 一括削除 buttons add and remove a second set
+  of records in a single transaction (`indexRecordsBatch` / `removeBatch`).
 - A **settings modal** (SwiftUI `.sheet` / Compose `ModalBottomSheet`) with a
   toggle per `NormalizeOptions` step, the search-algorithm picker, and an
   **index-regeneration** button. Flipping a step regenerates the index in place
   via `withOptionsRebuilding`, so results update without re-feeding records.
 - The same seed (8 records) on both platforms so hits can be compared by id
   side by side.
+
+The Flutter sample (`flutter/example`) mirrors the same UX, including the batch
+add/remove buttons.
 
 ## Tests
 

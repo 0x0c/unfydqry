@@ -39,6 +39,13 @@ final paged = await engine.search('tokyo', limit: 10);
 // Remove a document
 await engine.remove(1);
 
+// Batch index/remove in a single transaction (much faster on large batches).
+await engine.indexBatch([
+  IndexItem(id: 2, text: 'スカイツリー'),
+  IndexItem(id: 3, text: '大阪城'),
+]);                                        // → 2 (documents processed)
+await engine.removeBatch([2, 3]);          // → 2 (ids processed; missing ones skipped)
+
 // Release native resources
 await engine.dispose();
 ```
@@ -57,6 +64,18 @@ await engine.indexRecord(1, [
   FieldValue(slot: 0, text: '東京タワー'),       // name
   FieldValue(slot: 1, text: 'とうきょうたわー'),   // reading
 ]);
+
+// Upsert many records in one transaction (all-or-nothing validation).
+await engine.indexRecordsBatch([
+  RecordIndexItem(recordId: 2, fields: [
+    FieldValue(slot: 0, text: 'スカイツリー'),
+    FieldValue(slot: 1, text: 'すかいつりー'),
+  ]),
+  RecordIndexItem(recordId: 3, fields: [
+    FieldValue(slot: 0, text: '大阪城'),
+    FieldValue(slot: 1, text: 'おおさかじょう'),
+  ]),
+]);                                        // → 2 (records processed)
 
 // One RecordHit per record, ranked by the best matching field.
 final records = await engine.searchRecords('とうきょう', fieldsPerRecord: 2);
@@ -140,9 +159,12 @@ Channel name: **`unfydqry/search`**
 | `normalizeWithOptions` | `input: String, options: Map<String, bool>` | `String` |
 | `reindexStatusWithOptions` | `dbPath: String, options: Map<String, bool>` | `String` (`EMPTY` / `UP_TO_DATE` / `CONFIG_CHANGED`) |
 | `index` | `handle: int, id: int, text: String` | — |
+| `indexBatch` | `handle: int, items: List<Map>` (each `{id: int, text: String}`) | `int` (documents processed) |
 | `remove` | `handle: int, id: int` | — |
+| `removeBatch` | `handle: int, ids: List<int>` | `int` (ids processed) |
 | `search` | `handle: int, query: String, limit: int` | `List<Map<String, dynamic>>` |
 | `indexRecord` | `handle: int, recordId: int, fields: List<Map>` (each `{slot: int, text: String}`) | — |
+| `indexRecordsBatch` | `handle: int, records: List<Map>` (each `{recordId: int, fields: List<Map>}`) | `int` (records processed) |
 | `removeRecord` | `handle: int, recordId: int` | — |
 | `searchRecords` | `handle: int, query: String, limit: int, fieldsPerRecord: int` | `List<Map<String, dynamic>>` (each `{recordId, score, matchedSlots}`) |
 | `highlight` | `handle: int, query: String, id: int, before: String, after: String` | `String?` (original text with matches wrapped, or null) |

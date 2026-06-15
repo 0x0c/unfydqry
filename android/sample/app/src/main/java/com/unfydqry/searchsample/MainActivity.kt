@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +44,7 @@ import kotlinx.coroutines.delay
 import uniffi.unfydqry.EngineOptionsConfig
 import uniffi.unfydqry.FieldValue
 import uniffi.unfydqry.NormalizeOptions
+import uniffi.unfydqry.RecordIndexItem
 import uniffi.unfydqry.ReindexStatus
 import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.SearchStrategy
@@ -82,17 +84,23 @@ class MainActivity : ComponentActivity() {
             Record(7L, "データベース", "でーたべーす"),
             Record(8L, "プリンター", "ぷりんたー"),
         )
-        docs.forEach { r ->
-            // The engine packs (id, slot) internally; we pass our record id and a
-            // slot per field, and get record ids back from searchRecords.
-            engine.indexRecord(
-                recordId = r.id,
-                fields = listOf(
-                    FieldValue(slot = RecordSlot.NAME.slot.toUByte(), text = r.name),
-                    FieldValue(slot = RecordSlot.YOMI.slot.toUByte(), text = r.yomi),
-                ),
-            )
-        }
+        // Seed every record in a single transaction with the batch API
+        // (indexRecordsBatch) instead of one indexRecord call per record. Each
+        // RecordIndexItem carries the host record id plus a FieldValue per slot —
+        // the engine packs (id, slot) internally and returns record ids from
+        // searchRecords. Validation is all-or-nothing: if any record is invalid,
+        // nothing is indexed.
+        engine.indexRecordsBatch(
+            records = docs.map { r ->
+                RecordIndexItem(
+                    recordId = r.id,
+                    fields = listOf(
+                        FieldValue(slot = RecordSlot.NAME.slot.toUByte(), text = r.name),
+                        FieldValue(slot = RecordSlot.YOMI.slot.toUByte(), text = r.yomi),
+                    ),
+                )
+            },
+        )
         return docs.associateBy { it.id }
     }
 }
@@ -102,6 +110,17 @@ class MainActivity : ComponentActivity() {
 // low bits reserved for the slot is the library default (8); the packed id is
 // `recordId shl FIELD_BITS or slot`.
 private const val FIELD_BITS = 8
+
+// A second set of records the bulk-add button indexes — and the bulk-remove
+// button removes — in one transaction, to demonstrate the batch APIs. Uses ids
+// distinct from seed().
+private val extraSeed = listOf(
+    Record(101L, "横浜ランドマークタワー", "よこはまらんどまーくたわー"),
+    Record(102L, "通天閣", "つうてんかく"),
+    Record(103L, "金閣寺", "きんかくじ"),
+    Record(104L, "厳島神社", "いつくしまじんじゃ"),
+    Record(105L, "首里城", "しゅりじょう"),
+)
 
 /// Asks the engine to highlight [query] within each matched field of [recordId],
 /// keyed by slot. Slots whose normalized field does not actually contain a
@@ -140,16 +159,19 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
     var needsReindex by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
-    val allDocs = remember(store) {
-        store.values.sortedBy { it.id }.map { ResultRow(it, emptyList()) }
-    }
+    // Whether the extraSeed batch is currently indexed (drives the batch buttons).
+    var extraAdded by remember { mutableStateOf(false) }
+    // The currently-indexed records, keyed by id. Starts as `store`; the batch
+    // buttons add/remove `extraSeed` from both the engine and this map.
+    val records = remember { mutableStateMapOf<Long, Record>().apply { putAll(store) } }
+    fun allDocs() = records.values.sortedBy { it.id }.map { ResultRow(it, emptyList()) }
     // Prefilled so the initial empty query shows every record without a flash.
-    val results = remember { mutableStateListOf<ResultRow>().apply { addAll(allDocs) } }
+    val results = remember { mutableStateListOf<ResultRow>().apply { addAll(allDocs()) } }
 
     fun runSearch() {
         if (query.isBlank()) {
             results.clear()
-            results.addAll(allDocs)
+            results.addAll(allDocs())
             status = "全件表示 (${results.size})"
             return
         }
@@ -159,7 +181,7 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
         // The FFI returns matched slots as a byte buffer (ByteArray); expose them
         // as List<UByte> so the UI can map each slot to a label.
         val rows = hits.mapNotNull { h ->
-            store[h.recordId]?.let {
+            records[h.recordId]?.let {
                 ResultRow(
                     it,
                     h.matchedSlots.map { b -> b.toUByte() },
@@ -191,6 +213,43 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
         val old = engine
         engine = SearchEngine.withOptions(dbPath, EngineOptionsConfig(applied, newStrategy))
         old.close()
+        runSearch()
+    }
+
+    // Adds extraSeed in a single transaction via the record-layer batch API
+    // (indexRecordsBatch), which returns the number of records indexed.
+    fun addExtraBatch() {
+        val indexed = engine.indexRecordsBatch(
+            extraSeed.map { r ->
+                RecordIndexItem(
+                    recordId = r.id,
+                    fields = listOf(
+                        FieldValue(slot = RecordSlot.NAME.slot.toUByte(), text = r.name),
+                        FieldValue(slot = RecordSlot.YOMI.slot.toUByte(), text = r.yomi),
+                    ),
+                )
+            },
+        )
+        extraSeed.forEach { records[it.id] = it }
+        extraAdded = true
+        status = "一括追加: $indexed 件"
+        runSearch()
+    }
+
+    // Removes extraSeed in a single transaction via removeBatch. That API works
+    // at the packed document-id layer, so each record is expanded into its
+    // (recordId, slot) ids (recordId shl FIELD_BITS or slot); the call returns
+    // the number of document ids processed.
+    fun removeExtraBatch() {
+        val ids = extraSeed.flatMap { r ->
+            listOf(RecordSlot.NAME.slot, RecordSlot.YOMI.slot).map { slot ->
+                (r.id shl FIELD_BITS) or slot.toLong()
+            }
+        }
+        val removed = engine.removeBatch(ids)
+        extraSeed.forEach { records.remove(it.id) }
+        extraAdded = false
+        status = "一括削除: $removed ドキュメント"
         runSearch()
     }
 
@@ -254,6 +313,22 @@ fun SearchScreen(initialEngine: SearchEngine, store: Map<Long, Record>, dbPath: 
             )
             Spacer(Modifier.height(4.dp))
             Text(status, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            // Batch operations: add/remove a second set of records in one
+            // transaction (indexRecordsBatch / removeBatch).
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { addExtraBatch() },
+                    enabled = !extraAdded,
+                    modifier = Modifier.weight(1f),
+                ) { Text("一括追加 (+${extraSeed.size})") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { removeExtraBatch() },
+                    enabled = extraAdded,
+                    modifier = Modifier.weight(1f),
+                ) { Text("一括削除") }
+            }
             Spacer(Modifier.height(8.dp))
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(results, key = { it.record.id }) { row ->
