@@ -1007,8 +1007,7 @@ impl SearchEngine {
             self.strategy.search(&conn, &q, u32::MAX)?
         };
         let bits = self.field_bits();
-        let capacity = (hits.len() + (fields_per_record.max(1) as usize) - 1)
-            / (fields_per_record.max(1) as usize);
+        let capacity = hits.len().div_ceil(fields_per_record.max(1) as usize);
         let mut seen = std::collections::HashSet::with_capacity(capacity);
         for h in &hits {
             seen.insert(h.id >> bits);
