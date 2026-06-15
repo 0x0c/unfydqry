@@ -1,7 +1,7 @@
 mod helpers;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use unfydqry::SearchEngine;
+use unfydqry::{IndexItem, SearchEngine};
 
 fn bench_bulk_index(c: &mut Criterion) {
     let mut group = c.benchmark_group("index/bulk");
@@ -99,11 +99,68 @@ fn bench_remove(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_index_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("index/batch");
+    group.sample_size(20);
+
+    for &n in &helpers::doc_counts() {
+        let docs = helpers::generate_docs(n);
+        let items: Vec<IndexItem> = docs
+            .iter()
+            .enumerate()
+            .map(|(i, doc)| IndexItem {
+                id: i as i64,
+                text: doc.clone(),
+            })
+            .collect();
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &items, |b, items| {
+            b.iter_batched(
+                || items.clone(),
+                |batch| {
+                    let engine = SearchEngine::new(":memory:".to_string()).unwrap();
+                    engine.index_batch(batch).unwrap();
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn bench_remove_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("remove/batch");
+    group.sample_size(20);
+
+    for &n in &helpers::doc_counts() {
+        let docs = helpers::generate_docs(n);
+        let ids: Vec<i64> = (0..n as i64).collect();
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
+            b.iter_with_setup(
+                || {
+                    let engine = SearchEngine::new(":memory:".to_string()).unwrap();
+                    for (i, doc) in docs.iter().enumerate() {
+                        engine.index(i as i64, doc.clone()).unwrap();
+                    }
+                    engine
+                },
+                |engine| {
+                    engine.remove_batch(ids.clone()).unwrap();
+                },
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_bulk_index,
+    bench_index_batch,
     bench_single_index,
     bench_reindex,
-    bench_remove
+    bench_remove,
+    bench_remove_batch,
 );
 criterion_main!(benches);

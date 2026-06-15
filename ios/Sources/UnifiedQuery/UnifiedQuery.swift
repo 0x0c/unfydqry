@@ -656,6 +656,15 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func index(id: Int64, text: String) throws 
     
     /**
+     * Adds, or replaces, multiple documents in a single transaction.
+     *
+     * Semantically equivalent to calling `index` for each `(id, text)` pair,
+     * but wraps all writes in one transaction for significantly better
+     * throughput on large batches. Returns the number of documents processed.
+     */
+    func indexBatch(items: [IndexItem]) throws  -> UInt64
+    
+    /**
      * Adds, or replaces, the whole record `record_id`, made of multiple
      * fields.
      *
@@ -666,6 +675,17 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * `< 2^field_bits`, otherwise an error is returned and nothing is written.
      */
     func indexRecord(recordId: Int64, fields: [FieldValue]) throws 
+    
+    /**
+     * Adds, or replaces, multiple records in a single transaction.
+     *
+     * Semantically equivalent to calling `index_record` for each item, but
+     * wraps all writes in one transaction for significantly better throughput.
+     * All-or-nothing: if any `record_id` or `slot` is invalid, no records are
+     * written and an error is returned. Returns the number of records
+     * processed.
+     */
+    func indexRecordsBatch(records: [RecordIndexItem]) throws  -> UInt64
     
     /**
      * Returns the total number of documents matching `query`, without a limit.
@@ -699,6 +719,15 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * removed.
      */
     func removeAll() throws  -> UInt64
+    
+    /**
+     * Removes multiple documents by id in a single transaction.
+     *
+     * Semantically equivalent to calling `remove` for each id, but wraps all
+     * deletes in one transaction. Missing ids are silently skipped. Returns
+     * the number of ids processed.
+     */
+    func removeBatch(ids: [Int64]) throws  -> UInt64
     
     /**
      * Removes every field of `record_id`. A no-op if none exist.
@@ -983,6 +1012,22 @@ open func index(id: Int64, text: String)throws   {try rustCallWithError(FfiConve
 }
     
     /**
+     * Adds, or replaces, multiple documents in a single transaction.
+     *
+     * Semantically equivalent to calling `index` for each `(id, text)` pair,
+     * but wraps all writes in one transaction for significantly better
+     * throughput on large batches. Returns the number of documents processed.
+     */
+open func indexBatch(items: [IndexItem])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_index_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeIndexItem.lower(items),$0
+    )
+})
+}
+    
+    /**
      * Adds, or replaces, the whole record `record_id`, made of multiple
      * fields.
      *
@@ -999,6 +1044,24 @@ open func indexRecord(recordId: Int64, fields: [FieldValue])throws   {try rustCa
         FfiConverterSequenceTypeFieldValue.lower(fields),$0
     )
 }
+}
+    
+    /**
+     * Adds, or replaces, multiple records in a single transaction.
+     *
+     * Semantically equivalent to calling `index_record` for each item, but
+     * wraps all writes in one transaction for significantly better throughput.
+     * All-or-nothing: if any `record_id` or `slot` is invalid, no records are
+     * written and an error is returned. Returns the number of records
+     * processed.
+     */
+open func indexRecordsBatch(records: [RecordIndexItem])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_index_records_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeRecordIndexItem.lower(records),$0
+    )
+})
 }
     
     /**
@@ -1055,6 +1118,22 @@ open func removeAll()throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
     uniffi_unfydqry_fn_method_searchengine_remove_all(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Removes multiple documents by id in a single transaction.
+     *
+     * Semantically equivalent to calling `remove` for each id, but wraps all
+     * deletes in one transaction. Missing ids are silently skipped. Returns
+     * the number of ids processed.
+     */
+open func removeBatch(ids: [Int64])throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_remove_batch(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceInt64.lower(ids),$0
     )
 })
 }
@@ -1507,6 +1586,75 @@ public func FfiConverterTypeHit_lower(_ value: Hit) -> RustBuffer {
 
 
 /**
+ * An `(id, text)` pair for the batch-indexing API (`index_batch`).
+ */
+public struct IndexItem: Equatable, Hashable {
+    /**
+     * The id to index the document under (same semantics as `index`).
+     */
+    public var id: Int64
+    /**
+     * Raw text; the engine normalizes it the same way as `index`.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The id to index the document under (same semantics as `index`).
+         */id: Int64, 
+        /**
+         * Raw text; the engine normalizes it the same way as `index`.
+         */text: String) {
+        self.id = id
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension IndexItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeIndexItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IndexItem {
+        return
+            try IndexItem(
+                id: FfiConverterInt64.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: IndexItem, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexItem_lift(_ buf: RustBuffer) throws -> IndexItem {
+    return try FfiConverterTypeIndexItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeIndexItem_lower(_ value: IndexItem) -> RustBuffer {
+    return FfiConverterTypeIndexItem.lower(value)
+}
+
+
+/**
  * A composable set of normalization steps, all opt-in on top of NFKC.
  *
  * The engine applies the enabled steps in a fixed canonical order (see
@@ -1720,6 +1868,76 @@ public func FfiConverterTypeRecordHit_lift(_ buf: RustBuffer) throws -> RecordHi
 #endif
 public func FfiConverterTypeRecordHit_lower(_ value: RecordHit) -> RustBuffer {
     return FfiConverterTypeRecordHit.lower(value)
+}
+
+
+/**
+ * A `(record_id, fields)` pair for the batch record-indexing API
+ * (`index_records_batch`).
+ */
+public struct RecordIndexItem: Equatable, Hashable {
+    /**
+     * The host record id (same semantics as `index_record`).
+     */
+    public var recordId: Int64
+    /**
+     * The fields to store for this record.
+     */
+    public var fields: [FieldValue]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The host record id (same semantics as `index_record`).
+         */recordId: Int64, 
+        /**
+         * The fields to store for this record.
+         */fields: [FieldValue]) {
+        self.recordId = recordId
+        self.fields = fields
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RecordIndexItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecordIndexItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecordIndexItem {
+        return
+            try RecordIndexItem(
+                recordId: FfiConverterInt64.read(from: &buf), 
+                fields: FfiConverterSequenceTypeFieldValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecordIndexItem, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.recordId, into: &buf)
+        FfiConverterSequenceTypeFieldValue.write(value.fields, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordIndexItem_lift(_ buf: RustBuffer) throws -> RecordIndexItem {
+    return try FfiConverterTypeRecordIndexItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecordIndexItem_lower(_ value: RecordIndexItem) -> RustBuffer {
+    return FfiConverterTypeRecordIndexItem.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -2197,6 +2415,31 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceInt64: FfiConverterRustBuffer {
+    typealias SwiftType = [Int64]
+
+    public static func write(_ value: [Int64], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterInt64.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Int64]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterInt64.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFieldValue: FfiConverterRustBuffer {
     typealias SwiftType = [FieldValue]
 
@@ -2247,6 +2490,31 @@ fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeIndexItem: FfiConverterRustBuffer {
+    typealias SwiftType = [IndexItem]
+
+    public static func write(_ value: [IndexItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeIndexItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [IndexItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [IndexItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeIndexItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer {
     typealias SwiftType = [RecordHit]
 
@@ -2264,6 +2532,31 @@ fileprivate struct FfiConverterSequenceTypeRecordHit: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeRecordHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRecordIndexItem: FfiConverterRustBuffer {
+    typealias SwiftType = [RecordIndexItem]
+
+    public static func write(_ value: [RecordIndexItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRecordIndexItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RecordIndexItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RecordIndexItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRecordIndexItem.read(from: &buf))
         }
         return seq
     }
@@ -2381,7 +2674,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_method_searchengine_index_batch() != 35946) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_method_searchengine_index_record() != 36062) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_index_records_batch() != 30654) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745) {
@@ -2394,6 +2693,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_remove_all() != 61569) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_remove_batch() != 32238) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_remove_record() != 28442) {

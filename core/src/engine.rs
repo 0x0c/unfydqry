@@ -62,6 +62,25 @@ pub struct RecordHit {
     pub matched_slots: Vec<u8>,
 }
 
+/// An `(id, text)` pair for the batch-indexing API (`index_batch`).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct IndexItem {
+    /// The id to index the document under (same semantics as `index`).
+    pub id: i64,
+    /// Raw text; the engine normalizes it the same way as `index`.
+    pub text: String,
+}
+
+/// A `(record_id, fields)` pair for the batch record-indexing API
+/// (`index_records_batch`).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RecordIndexItem {
+    /// The host record id (same semantics as `index_record`).
+    pub record_id: i64,
+    /// The fields to store for this record.
+    pub fields: Vec<FieldValue>,
+}
+
 /// An error surfaced across the FFI boundary by `SearchEngine`.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum SearchError {
@@ -537,6 +556,56 @@ impl SearchEngine {
         Ok(())
     }
 
+    /// Adds, or replaces, multiple documents in a single transaction.
+    ///
+    /// Semantically equivalent to calling `index` for each `(id, text)` pair,
+    /// but wraps all writes in one transaction for significantly better
+    /// throughput on large batches. Returns the number of documents processed.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    pub fn index_batch(&self, items: Vec<IndexItem>) -> Result<u64, SearchError> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        for item in &items {
+            let norm = self.normalizer.normalize(&item.text);
+            tx.execute("DELETE FROM docs WHERE rowid=?1", params![item.id])?;
+            tx.execute(
+                "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
+                params![item.id, &norm],
+            )?;
+            tx.execute(
+                "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
+                params![item.id, &norm, &item.text],
+            )?;
+        }
+        let count = items.len() as u64;
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// Removes multiple documents by id in a single transaction.
+    ///
+    /// Semantically equivalent to calling `remove` for each id, but wraps all
+    /// deletes in one transaction. Missing ids are silently skipped. Returns
+    /// the number of ids processed.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    pub fn remove_batch(&self, ids: Vec<i64>) -> Result<u64, SearchError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        for id in &ids {
+            tx.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
+            tx.execute("DELETE FROM entries WHERE id=?1", params![id])?;
+        }
+        let count = ids.len() as u64;
+        tx.commit()?;
+        Ok(count)
+    }
+
     /// Removes all documents from the index. Returns the number of documents
     /// removed.
     pub fn remove_all(&self) -> Result<u64, SearchError> {
@@ -750,6 +819,74 @@ impl SearchEngine {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Adds, or replaces, multiple records in a single transaction.
+    ///
+    /// Semantically equivalent to calling `index_record` for each item, but
+    /// wraps all writes in one transaction for significantly better throughput.
+    /// All-or-nothing: if any `record_id` or `slot` is invalid, no records are
+    /// written and an error is returned. Returns the number of records
+    /// processed.
+    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    pub fn index_records_batch(&self, records: Vec<RecordIndexItem>) -> Result<u64, SearchError> {
+        if records.is_empty() {
+            return Ok(0);
+        }
+        let bits = self.field_bits();
+        let max_record = self.max_record_id();
+        let slot_cap = 1i64 << bits;
+
+        // Validate all records up front so no partial writes occur.
+        for r in &records {
+            if !(0..=max_record).contains(&r.record_id) {
+                return Err(SearchError::Db(format!(
+                    "record_id {} out of range for field_bits {bits}",
+                    r.record_id
+                )));
+            }
+            let mut seen_slots: Vec<u8> = Vec::with_capacity(r.fields.len());
+            for f in &r.fields {
+                if i64::from(f.slot) >= slot_cap {
+                    return Err(SearchError::Db(format!(
+                        "slot {} does not fit in field_bits {bits}",
+                        f.slot
+                    )));
+                }
+                if seen_slots.contains(&f.slot) {
+                    return Err(SearchError::Db(format!(
+                        "duplicate slot {} in index_records_batch fields",
+                        f.slot
+                    )));
+                }
+                seen_slots.push(f.slot);
+            }
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        for r in &records {
+            let (lo, hi) = self.record_id_range(r.record_id);
+            Self::clear_id_range(&tx, lo, hi)?;
+            for f in &r.fields {
+                let norm = self.normalizer.normalize(&f.text);
+                if norm.is_empty() {
+                    continue;
+                }
+                let id = lo | i64::from(f.slot);
+                tx.execute(
+                    "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
+                    params![id, &norm],
+                )?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
+                    params![id, &norm, &f.text],
+                )?;
+            }
+        }
+        let count = records.len() as u64;
+        tx.commit()?;
+        Ok(count)
     }
 
     /// Removes every field of `record_id`. A no-op if none exist.
@@ -2177,5 +2314,146 @@ mod tests {
     fn contains_record_rejects_out_of_range() {
         let e = fresh();
         assert!(matches!(e.contains_record(-1), Err(SearchError::Db(_))));
+    }
+
+    // --- index_batch ---
+
+    fn ii(id: i64, text: &str) -> IndexItem {
+        IndexItem {
+            id,
+            text: text.into(),
+        }
+    }
+
+    fn ri(record_id: i64, fields: Vec<FieldValue>) -> RecordIndexItem {
+        RecordIndexItem { record_id, fields }
+    }
+
+    #[test]
+    fn index_batch_indexes_multiple_documents() {
+        let e = fresh();
+        let items = vec![ii(1, "とうきょう"), ii(2, "おおさか"), ii(3, "なごや")];
+        let count = e.index_batch(items).unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(e.search("とうきょう".into(), 10).unwrap().len(), 1);
+        assert_eq!(e.search("おおさか".into(), 10).unwrap().len(), 1);
+        assert_eq!(e.search("なごや".into(), 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn index_batch_replaces_existing_documents() {
+        let e = fresh();
+        e.index(1, "old text".into()).unwrap();
+        let items = vec![ii(1, "new text"), ii(2, "another")];
+        e.index_batch(items).unwrap();
+        assert!(e.search("old text".into(), 10).unwrap().is_empty());
+        assert_eq!(e.search("new text".into(), 10).unwrap().len(), 1);
+        assert_eq!(e.document_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn index_batch_empty_is_noop() {
+        let e = fresh();
+        let count = e.index_batch(vec![]).unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(e.document_count().unwrap(), 0);
+    }
+
+    // --- remove_batch ---
+
+    #[test]
+    fn remove_batch_removes_multiple_documents() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.index(2, "world".into()).unwrap();
+        e.index(3, "foo".into()).unwrap();
+        let removed = e.remove_batch(vec![1, 3]).unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(e.document_count().unwrap(), 1);
+        assert_eq!(e.search("world".into(), 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_batch_skips_missing_ids() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        let removed = e.remove_batch(vec![1, 999]).unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(e.document_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn remove_batch_empty_is_noop() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        let removed = e.remove_batch(vec![]).unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(e.document_count().unwrap(), 1);
+    }
+
+    // --- index_records_batch ---
+
+    #[test]
+    fn index_records_batch_indexes_multiple_records() {
+        let e = fresh();
+        let records = vec![
+            ri(1, vec![fv(0, "とうきょう"), fv(1, "首都")]),
+            ri(2, vec![fv(0, "おおさか"), fv(1, "西日本")]),
+        ];
+        let count = e.index_records_batch(records).unwrap();
+        assert_eq!(count, 2);
+        let hits = e.search_records("とうきょう".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 1);
+        let hits = e.search_records("おおさか".into(), 10, 2).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].record_id, 2);
+    }
+
+    #[test]
+    fn index_records_batch_replaces_existing_records() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "old")]).unwrap();
+        let records = vec![ri(1, vec![fv(0, "new")]), ri(2, vec![fv(0, "another")])];
+        e.index_records_batch(records).unwrap();
+        assert!(e.search_records("old".into(), 10, 1).unwrap().is_empty());
+        assert_eq!(e.search_records("new".into(), 10, 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn index_records_batch_empty_is_noop() {
+        let e = fresh();
+        let count = e.index_records_batch(vec![]).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn index_records_batch_rejects_invalid_record_id() {
+        let e = fresh();
+        let records = vec![ri(1, vec![fv(0, "ok")]), ri(-1, vec![fv(0, "bad")])];
+        assert!(matches!(
+            e.index_records_batch(records),
+            Err(SearchError::Db(_))
+        ));
+        // All-or-nothing: record 1 should not have been indexed either.
+        assert_eq!(e.document_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn index_records_batch_rejects_invalid_slot() {
+        let e = SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::TrigramBm25,
+                field_bits: Some(2),
+            },
+        )
+        .expect("open");
+        let records = vec![ri(1, vec![fv(4, "bad slot")])];
+        assert!(matches!(
+            e.index_records_batch(records),
+            Err(SearchError::Db(_))
+        ));
     }
 }
