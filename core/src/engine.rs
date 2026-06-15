@@ -993,8 +993,6 @@ impl SearchEngine {
     ///
     /// Unlike the per-document count, this collapses field hits to unique
     /// record ids, matching the semantics of the record-level search.
-    /// `fields_per_record` is used as a capacity hint for the internal
-    /// deduplication set.
     pub fn match_count_records(
         &self,
         query: String,
@@ -1009,7 +1007,8 @@ impl SearchEngine {
             self.strategy.search(&conn, &q, u32::MAX)?
         };
         let bits = self.field_bits();
-        let capacity = hits.len() / (fields_per_record.max(1) as usize);
+        let capacity = (hits.len() + (fields_per_record.max(1) as usize) - 1)
+            / (fields_per_record.max(1) as usize);
         let mut seen = std::collections::HashSet::with_capacity(capacity);
         for h in &hits {
             seen.insert(h.id >> bits);
@@ -1019,9 +1018,9 @@ impl SearchEngine {
 
     /// Returns a single page of record-level search results (0-indexed).
     ///
-    /// Combines record-level search semantics with pagination. Page 0 with a
-    /// given `per_page` returns the same results as the unpaginated record
-    /// search.
+    /// Combines record-level search semantics with pagination. Page 0 with
+    /// a given `per_page` returns the same results as the unpaginated
+    /// record search.
     pub fn search_records_page(
         &self,
         query: String,
@@ -1038,10 +1037,10 @@ impl SearchEngine {
             ))
         })?;
         let mut all = self.search_records(query, total_limit, fields_per_record)?;
-        let drain_to = (offset as usize).min(all.len());
-        all.drain(..drain_to);
-        all.truncate(per_page as usize);
-        Ok(all)
+        let skip = (offset as usize).min(all.len());
+        let mut page = all.split_off(skip);
+        page.truncate(per_page as usize);
+        Ok(page)
     }
 
     /// Re-packs every stored id from the index's current `field_bits` to
