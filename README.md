@@ -287,6 +287,9 @@ It is a thin layer over the same index: the engine packs `(record_id, slot)` int
 | `indexRecordsBatch([RecordIndexItem(recordId, [FieldValue(slot, text), …]), …])` | Upsert many records in a single transaction. All-or-nothing: if any `recordId` or `slot` is invalid, nothing is indexed. Returns the number processed. |
 | `searchRecords(query, limit, fieldsPerRecord)` | Search across fields; returns at most `limit` `RecordHit`s ranked by each record's best (smallest-score) matching field. `fieldsPerRecord` is the host's field count, used only as an over-fetch hint. |
 | `removeRecord(recordId)` | Remove every field of a record. |
+| `highlightRecord(query, recordId, slot, before, after)` | Highlight a specific field of a record. Returns `nil`/`null` if the slot does not exist. |
+| `matchCountRecords(query, fieldsPerRecord)` | Total number of *records* matching the query (field hits collapsed to unique record ids). |
+| `searchRecordsPage(query, perPage, page, fieldsPerRecord)` | Paginated record-level search (0-indexed). Page 0 equals `searchRecords(query, perPage, …)`. |
 | `changeFieldBits(newFieldBits)` | Re-pack the whole index to a new `field_bits` (see below). |
 
 `index` / `remove` / `search` / `Hit` are unchanged and can still be used directly; the record layer is purely additive.

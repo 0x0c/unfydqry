@@ -647,6 +647,14 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func highlight(query: String, id: Int64, before: String, after: String) throws  -> String?
     
     /**
+     * Returns the highlighted text for a specific field of a record.
+     *
+     * This is a convenience wrapper around `highlight` that computes the
+     * packed id from `(record_id, slot)`.
+     */
+    func highlightRecord(query: String, recordId: Int64, slot: UInt8, before: String, after: String) throws  -> String?
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -695,6 +703,14 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * or whitespace-only queries.
      */
     func matchCount(query: String) throws  -> UInt64
+    
+    /**
+     * Returns the total number of *records* matching `query`.
+     *
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     */
+    func matchCountRecords(query: String, fieldsPerRecord: UInt32) throws  -> UInt64
     
     /**
      * Regenerates the index by re-normalizing every stored document's raw text
@@ -763,6 +779,15 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
      * normalized) query returns no records.
      */
     func searchRecords(query: String, limit: UInt32, fieldsPerRecord: UInt32) throws  -> [RecordHit]
+    
+    /**
+     * Returns a single page of record-level search results (0-indexed).
+     *
+     * Combines record-level search semantics with pagination. Page 0 with
+     * a given `per_page` returns the same results as the unpaginated
+     * record search.
+     */
+    func searchRecordsPage(query: String, perPage: UInt32, page: UInt32, fieldsPerRecord: UInt32) throws  -> [RecordHit]
     
 }
 /**
@@ -996,6 +1021,25 @@ open func highlight(query: String, id: Int64, before: String, after: String)thro
 }
     
     /**
+     * Returns the highlighted text for a specific field of a record.
+     *
+     * This is a convenience wrapper around `highlight` that computes the
+     * packed id from `(record_id, slot)`.
+     */
+open func highlightRecord(query: String, recordId: Int64, slot: UInt8, before: String, after: String)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_highlight_record(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterInt64.lower(recordId),
+        FfiConverterUInt8.lower(slot),
+        FfiConverterString.lower(before),
+        FfiConverterString.lower(after),$0
+    )
+})
+}
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1076,6 +1120,22 @@ open func matchCount(query: String)throws  -> UInt64  {
     uniffi_unfydqry_fn_method_searchengine_match_count(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),$0
+    )
+})
+}
+    
+    /**
+     * Returns the total number of *records* matching `query`.
+     *
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     */
+open func matchCountRecords(query: String, fieldsPerRecord: UInt32)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_match_count_records(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(fieldsPerRecord),$0
     )
 })
 }
@@ -1200,6 +1260,25 @@ open func searchRecords(query: String, limit: UInt32, fieldsPerRecord: UInt32)th
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),
+        FfiConverterUInt32.lower(fieldsPerRecord),$0
+    )
+})
+}
+    
+    /**
+     * Returns a single page of record-level search results (0-indexed).
+     *
+     * Combines record-level search semantics with pagination. Page 0 with
+     * a given `per_page` returns the same results as the unpaginated
+     * record search.
+     */
+open func searchRecordsPage(query: String, perPage: UInt32, page: UInt32, fieldsPerRecord: UInt32)throws  -> [RecordHit]  {
+    return try  FfiConverterSequenceTypeRecordHit.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_search_records_page(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(perPage),
+        FfiConverterUInt32.lower(page),
         FfiConverterUInt32.lower(fieldsPerRecord),$0
     )
 })
@@ -2671,6 +2750,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_method_searchengine_highlight_record() != 29451) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 46744) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2684,6 +2766,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 62060) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527) {
@@ -2708,6 +2793,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 19050) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373) {
