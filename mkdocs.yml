@@ -13,8 +13,12 @@ docs_dir: .
 # Allowlist: exclude everything at the repo root, then re-include only the files
 # that make up the site. mkdocs-same-dir would otherwise pull in source trees
 # (core/, ios/, android/, flutter/, ...) and any stray markdown they contain.
+# Note: with docs_dir at the repo root, the theme's static assets land at the
+# top-level `assets/` and are subject to this filter too, so it must be
+# re-included (!/assets/) or the site renders with no CSS/JS.
 exclude_docs: |
   /*
+  !/assets/
   !/README.md
   !/AGENTS.md
   !/CONTRIBUTING.md
