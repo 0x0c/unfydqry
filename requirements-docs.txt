@@ -1,0 +1,9 @@
+# Documentation site toolchain (MkDocs + Material). Used locally and by the
+# docs GitHub Actions workflow. Not a runtime dependency of the project.
+#
+# mkdocs-same-dir is pinned to ==0.1.3 on purpose: 0.1.4 added a dependency on
+# `properdocs` (a MkDocs fork) that injects an advocacy banner into every build.
+# 0.1.3 depends only on canonical mkdocs. Revisit if the ecosystem settles.
+mkdocs>=1.6,<2
+mkdocs-material>=9.5,<10
+mkdocs-same-dir==0.1.3
