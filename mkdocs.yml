@@ -1,0 +1,120 @@
+site_name: unfydqry
+site_description: A shared full-text search engine for iOS (SwiftData) and Android (Room), built on a single Rust + UniFFI core.
+site_url: https://0x0c.github.io/unfydqry/
+repo_url: https://github.com/0x0c/unfydqry
+repo_name: 0x0c/unfydqry
+edit_uri: edit/main/
+
+# The repository is laid out for GitHub rendering: docs under docs/ link back to
+# the root README.md and spec/README.md with relative paths. To keep every link
+# working without moving files, mkdocs-same-dir lets docs_dir be the repo root.
+docs_dir: .
+
+# Allowlist: exclude everything at the repo root, then re-include only the files
+# that make up the site. mkdocs-same-dir would otherwise pull in source trees
+# (core/, ios/, android/, flutter/, ...) and any stray markdown they contain.
+exclude_docs: |
+  /*
+  !/README.md
+  !/AGENTS.md
+  !/CONTRIBUTING.md
+  !/docs/
+  !/spec/
+  /spec/*
+  !/spec/README.md
+  !/.github/
+  /.github/*
+  !/.github/pull_request_template.md
+
+not_in_nav: |
+  /.github/pull_request_template.md
+
+# The docs are dual-purpose: they render on GitHub and as this site. Some links
+# are intentionally repo-relative (LICENSE, ../README.md anchors) and a few
+# pre-existing cross-links are imperfect. Keep --strict meaningful for config
+# and nav errors without failing the build on these content-level link quirks.
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: info
+  anchors: info
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - same-dir
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# Header language switcher. Links carry the /unfydqry/ project-pages base path.
+extra:
+  alternate:
+    - name: English
+      link: /unfydqry/
+      lang: en
+    - name: 日本語
+      link: /unfydqry/docs/ja/
+      lang: ja
+
+nav:
+  - Home: README.md
+  - Bindings:
+      - iOS (Swift): docs/ios.md
+      - Android (Kotlin): docs/android.md
+      - Flutter (Dart): docs/flutter-plugin.md
+  - Design rationale: docs/cross-platform-search-engine-design.md
+  - Spec & fixtures: spec/README.md
+  - Contributing: CONTRIBUTING.md
+  - Agents: AGENTS.md
+  - 日本語:
+      - README: docs/ja/README.md
+      - 設計の意図と根拠: docs/ja/cross-platform-search-engine-design.md
+      - コントリビュート: docs/ja/CONTRIBUTING.md
+      - エージェント向け: docs/ja/AGENTS.md
