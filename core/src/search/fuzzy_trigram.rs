@@ -111,7 +111,11 @@ impl SearchAlgorithm for FuzzyTrigram {
         // 3+ char queries: use trigram sets. Reuse q_chars to avoid a second
         // chars().collect() inside trigrams().
         let qset = trigrams(&q_chars);
-        let match_expr = build_fts5_or(&qset).expect("3+ char query always produces trigrams");
+        // A 3+ char query always yields at least one trigram, so `build_fts5_or`
+        // returns `Some`; surface the invariant as an error rather than panicking.
+        let match_expr = build_fts5_or(&qset).ok_or_else(|| {
+            SearchError::Db("internal: 3+ char query produced no trigrams".to_string())
+        })?;
         let mut stmt = conn.prepare("SELECT rowid, norm FROM docs WHERE docs MATCH ?1")?;
         let rows = stmt.query_map(params![match_expr], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))

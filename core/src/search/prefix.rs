@@ -18,12 +18,14 @@ use crate::engine::{Hit, SearchError};
 /// upper bound — the caller should fall back to a >= only query).
 fn prefix_upper_bound(s: &str) -> Option<String> {
     let mut chars: Vec<char> = s.chars().collect();
-    while let Some(&last) = chars.last() {
+    // Pop the last char and try to increment it: on success push the successor
+    // back and return; otherwise it was `char::MAX`, so leave it dropped and
+    // shrink further. Popping avoids re-borrowing the vector to overwrite.
+    while let Some(last) = chars.pop() {
         if let Some(next) = char::from_u32(last as u32 + 1) {
-            *chars.last_mut().unwrap() = next;
+            chars.push(next);
             return Some(chars.into_iter().collect());
         }
-        chars.pop();
     }
     None
 }
