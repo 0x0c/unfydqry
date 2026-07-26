@@ -3,7 +3,10 @@
 //! No external RNG crate — uses a simple LCG and fixed word lists to produce
 //! reproducible Japanese text that exercises every normalization step.
 
-#![allow(unused)]
+#![allow(
+    unused,
+    reason = "shared bench helpers; not every helper is used by every bench"
+)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

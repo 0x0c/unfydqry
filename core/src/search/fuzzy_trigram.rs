@@ -27,7 +27,9 @@ fn trigrams(chars: &[char]) -> HashSet<[char; 3]> {
         return set;
     }
     for w in chars.windows(3) {
-        set.insert([w[0], w[1], w[2]]);
+        if let [a, b, c] = w {
+            set.insert([*a, *b, *c]);
+        }
     }
     set
 }
@@ -39,6 +41,13 @@ fn exact_match_similarity(query: &str, doc: &str) -> f64 {
     if query == doc { 1.0 } else { 0.0 }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "union = |A| + |B| - |A n B|; inter <= min(|A|, |B|) and set sizes are \
+              bounded by memory, so the usize add/sub cannot overflow or underflow. \
+              The usize -> f64 ratio is the Jaccard score, where precision loss is irrelevant"
+)]
 fn jaccard(a: &HashSet<[char; 3]>, b: &HashSet<[char; 3]>) -> f64 {
     let inter = a.intersection(b).count();
     let union = a.len() + b.len() - inter;
@@ -53,7 +62,12 @@ fn jaccard(a: &HashSet<[char; 3]>, b: &HashSet<[char; 3]>) -> f64 {
 /// deterministic output, then truncates to `limit`.
 fn rank_and_truncate(hits: &mut Vec<Hit>, limit: u32) {
     hits.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.id.cmp(&b.id)));
-    hits.truncate(limit as usize);
+    #[expect(
+        clippy::as_conversions,
+        reason = "a u32 limit always fits usize on supported (>= 32-bit) targets"
+    )]
+    let keep = limit as usize;
+    hits.truncate(keep);
 }
 
 /// Builds an FTS5 MATCH expression that ORs all trigrams as phrase queries.

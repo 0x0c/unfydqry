@@ -22,7 +22,7 @@ fn prefix_upper_bound(s: &str) -> Option<String> {
     // back and return; otherwise it was `char::MAX`, so leave it dropped and
     // shrink further. Popping avoids re-borrowing the vector to overwrite.
     while let Some(last) = chars.pop() {
-        if let Some(next) = char::from_u32(last as u32 + 1) {
+        if let Some(next) = u32::from(last).checked_add(1).and_then(char::from_u32) {
             chars.push(next);
             return Some(chars.into_iter().collect());
         }
@@ -43,7 +43,7 @@ fn prefix_query(
 ) -> Result<Vec<Hit>, SearchError> {
     let rows = if let Some(upper) = upper {
         let sql = format!("{select} WHERE norm >= ?1 AND norm < ?2 {extra_sql}");
-        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q as &dyn rusqlite::ToSql, upper];
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q, upper];
         all_params.extend_from_slice(extra_params);
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(all_params), |r| {
@@ -55,7 +55,7 @@ fn prefix_query(
         rows.filter_map(Result::ok).collect()
     } else {
         let sql = format!("{select} WHERE norm >= ?1 {extra_sql}");
-        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q as &dyn rusqlite::ToSql];
+        let mut all_params: Vec<&dyn rusqlite::ToSql> = vec![&q];
         all_params.extend_from_slice(extra_params);
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(all_params), |r| {
@@ -74,13 +74,14 @@ pub struct Prefix;
 impl SearchAlgorithm for Prefix {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
         let upper = prefix_upper_bound(q);
+        let params: [&dyn rusqlite::ToSql; 1] = [&limit];
         prefix_query(
             conn,
             q,
             &upper,
             "SELECT id FROM entries",
             "LIMIT ?",
-            &[&limit as &dyn rusqlite::ToSql],
+            &params,
         )
     }
 
@@ -92,13 +93,14 @@ impl SearchAlgorithm for Prefix {
         offset: u32,
     ) -> Result<Vec<Hit>, SearchError> {
         let upper = prefix_upper_bound(q);
+        let params: [&dyn rusqlite::ToSql; 2] = [&limit, &offset];
         prefix_query(
             conn,
             q,
             &upper,
             "SELECT id FROM entries",
             "LIMIT ? OFFSET ?",
-            &[&limit as &dyn rusqlite::ToSql, &offset],
+            &params,
         )
     }
 

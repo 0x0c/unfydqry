@@ -32,7 +32,8 @@ pub trait SearchAlgorithm: Send + Sync {
     /// and edit-distance strategies).  SQL-based strategies override this with
     /// an efficient `SELECT COUNT(*)`.
     fn match_count(&self, conn: &Connection, query: &str) -> Result<u64, SearchError> {
-        Ok(self.search(conn, query, u32::MAX)?.len() as u64)
+        let n = self.search(conn, query, u32::MAX)?.len();
+        u64::try_from(n).map_err(|e| SearchError::Db(e.to_string()))
     }
 
     /// Returns up to `limit` hits, skipping the first `offset` results.
@@ -54,7 +55,9 @@ pub trait SearchAlgorithm: Send + Sync {
             SearchError::Db(format!("limit {limit} + offset {offset} overflows u32"))
         })?;
         let mut hits = self.search(conn, query, total)?;
-        let drain_to = (offset as usize).min(hits.len());
+        let drain_to = usize::try_from(offset)
+            .map_err(|e| SearchError::Db(e.to_string()))?
+            .min(hits.len());
         hits.drain(..drain_to);
         Ok(hits)
     }

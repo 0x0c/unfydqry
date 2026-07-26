@@ -63,8 +63,12 @@ impl Normalizer for Composable {
 /// Dakuten-marked forms (ガ=U+30AC, ヴ=U+30F4 etc.) also map correctly via -0x60,
 /// so they stay distinct from their base forms.
 fn katakana_to_hiragana(c: char) -> char {
-    match c as u32 {
-        0x30A1..=0x30F6 => char::from_u32(c as u32 - 0x60).unwrap_or(c),
+    let cp = u32::from(c);
+    match cp {
+        // Subtraction stays in the Hiragana block for this range, so the
+        // checked_sub never returns None; `unwrap_or(c)` keeps the pass-through
+        // contract regardless.
+        0x30A1..=0x30F6 => cp.checked_sub(0x60).and_then(char::from_u32).unwrap_or(c),
         _ => c,
     }
 }

@@ -189,6 +189,13 @@ impl SearchEngine {
             .map_err(|_| SearchError::Db("connection mutex poisoned".to_string()))
     }
 
+    /// Converts a `usize` count to the `u64` the FFI surface returns. Infallible
+    /// on all supported (<= 64-bit) targets, but propagated as an error rather
+    /// than truncating should `usize` ever be wider than `u64`.
+    fn count_u64(n: usize) -> Result<u64, SearchError> {
+        u64::try_from(n).map_err(|e| SearchError::Db(e.to_string()))
+    }
+
     /// Opens the connection and ensures the schema and migrations are in place.
     fn open_schema(db_path: &str) -> Result<Connection, SearchError> {
         let conn = Connection::open(db_path)?;
@@ -302,12 +309,26 @@ impl SearchEngine {
     }
 
     /// Decodes the field slot from a packed document id.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "field_bits is validated to 1..=62, so the shift and subtraction \
+                  cannot overflow; slots originate as u8 (validated < 1<<field_bits), \
+                  so masking to the low field_bits and narrowing to u8 is exact"
+    )]
     fn slot_of(&self, doc_id: i64) -> u8 {
         (doc_id & ((1i64 << self.field_bits()) - 1)) as u8
     }
 
     /// The inclusive packed-id range `[lo, hi]` owned by `record_id` under the
     /// active field-bits. `lo` is also the packed id of the record's slot 0.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "field_bits is validated to 1..=62, so the shift and subtraction \
+                  stay within i64"
+    )]
     fn record_id_range(&self, record_id: i64) -> (i64, i64) {
         let lo = record_id << self.field_bits();
         (lo, lo | ((1i64 << self.field_bits()) - 1))
@@ -558,7 +579,7 @@ impl SearchEngine {
         }
         Self::stamp_profile(&tx, &self.options.fingerprint())?;
         tx.commit()?;
-        Ok(rows.len() as u64)
+        Self::count_u64(rows.len())
     }
 
     /// Removes the document stored under `id`. A no-op if no such document
@@ -598,7 +619,7 @@ impl SearchEngine {
                 params![item.id, &norm, &item.text],
             )?;
         }
-        let count = items.len() as u64;
+        let count = Self::count_u64(items.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -622,7 +643,7 @@ impl SearchEngine {
             tx.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
             tx.execute("DELETE FROM entries WHERE id=?1", params![id])?;
         }
-        let count = ids.len() as u64;
+        let count = Self::count_u64(ids.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -911,7 +932,7 @@ impl SearchEngine {
                 )?;
             }
         }
-        let count = records.len() as u64;
+        let count = Self::count_u64(records.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -985,7 +1006,8 @@ impl SearchEngine {
                 .total_cmp(&b.score)
                 .then(a.record_id.cmp(&b.record_id))
         });
-        out.truncate(limit as usize);
+        let keep = usize::try_from(limit).map_err(|e| SearchError::Db(e.to_string()))?;
+        out.truncate(keep);
         Ok(out)
     }
 
@@ -1080,6 +1102,11 @@ impl SearchEngine {
         clippy::significant_drop_tightening,
         reason = "tx borrows conn; the guard cannot be dropped early"
     )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "old and new_field_bits are validated to 1..=62, so the mask shift \
+                  and subtraction stay within i64"
+    )]
     pub fn change_field_bits(&self, new_field_bits: u8) -> Result<u64, SearchError> {
         Self::check_field_bits(new_field_bits)?;
         let conn = self.locked_conn()?;
@@ -1143,13 +1170,20 @@ impl SearchEngine {
         Self::stamp_field_bits(&tx, new_field_bits)?;
         tx.commit()?;
         self.field_bits.store(new_field_bits, Ordering::Relaxed);
-        Ok(rows.len() as u64)
+        Self::count_u64(rows.len())
     }
 }
 
 /// Wraps every non-overlapping occurrence of `needle` in `haystack` with
 /// `before`/`after` markers.  Returns a `String` equal to `haystack` when
 /// `needle` is not found.
+#[expect(
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    reason = "prev_end and pos are byte offsets returned by match_indices, so they \
+              are valid char boundaries with prev_end <= pos <= haystack.len(); the \
+              offset addition is bounded by haystack.len() and cannot overflow"
+)]
 fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str) -> String {
     if needle.is_empty() {
         return haystack.to_string();
@@ -1160,8 +1194,12 @@ fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str
         return haystack.to_string();
     }
 
-    let extra = matches.len() * (before.len() + after.len());
-    let mut out = String::with_capacity(haystack.len() + extra);
+    // Capacity is a hint; saturate so a pathological input can't overflow (worst
+    // case is a later re-allocation).
+    let extra = matches
+        .len()
+        .saturating_mul(before.len().saturating_add(after.len()));
+    let mut out = String::with_capacity(haystack.len().saturating_add(extra));
     let mut prev_end = 0;
     for (pos, matched) in matches {
         out.push_str(&haystack[prev_end..pos]);
@@ -1189,6 +1227,16 @@ fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str
 /// position (O(k) calls where k ≤ n = chars in raw; O(n) worst case when the
 /// match is near the end). Each match boundary is resolved via binary search
 /// in O(log n).
+#[expect(
+    clippy::string_slice,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "all byte offsets come from match_indices / char_indices (valid char \
+              boundaries bounded by raw.len() / norm.len()); bounds is seeded with one \
+              entry so bounds.len() >= 1, and every index is guarded (idx == 0 / \
+              idx >= bounds.len()) or derived from partition_point, so slicing and \
+              indexing are in bounds and the offset arithmetic cannot overflow"
+)]
 fn highlight_raw(
     raw: &str,
     norm: &str,
@@ -1243,8 +1291,11 @@ fn highlight_raw(
         }
     };
 
-    let extra = ranges.len() * (before.len() + after.len());
-    let mut out = String::with_capacity(raw.len() + extra);
+    // Capacity is a hint; saturate so a pathological input can't overflow.
+    let extra = ranges
+        .len()
+        .saturating_mul(before.len().saturating_add(after.len()));
+    let mut out = String::with_capacity(raw.len().saturating_add(extra));
     let mut prev_end = 0;
     for (ns, ne) in ranges {
         let rs = start_for(ns).max(prev_end);

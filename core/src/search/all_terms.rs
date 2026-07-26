@@ -26,12 +26,14 @@ impl SearchAlgorithm for AllTerms {
         }
 
         let clause = like_and_clause(escaped_terms.len());
-        let sql = format!(
-            "SELECT id FROM entries WHERE {clause} LIMIT ?{}",
-            escaped_terms.len() + 1
-        );
+        let limit_idx = escaped_terms
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| SearchError::Db("query has too many terms".to_string()))?;
+        let sql = format!("SELECT id FROM entries WHERE {clause} LIMIT ?{limit_idx}");
 
-        let mut binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
+        let mut binds: Vec<&dyn ToSql> =
+            escaped_terms.iter().map(|t| -> &dyn ToSql { t }).collect();
         binds.push(&limit);
 
         let mut stmt = conn.prepare(&sql)?;
@@ -57,13 +59,19 @@ impl SearchAlgorithm for AllTerms {
         }
 
         let clause = like_and_clause(escaped_terms.len());
+        let n = escaped_terms.len();
+        let limit_idx = n
+            .checked_add(1)
+            .ok_or_else(|| SearchError::Db("query has too many terms".to_string()))?;
+        let offset_idx = n
+            .checked_add(2)
+            .ok_or_else(|| SearchError::Db("query has too many terms".to_string()))?;
         let sql = format!(
-            "SELECT id FROM entries WHERE {clause} LIMIT ?{} OFFSET ?{}",
-            escaped_terms.len() + 1,
-            escaped_terms.len() + 2
+            "SELECT id FROM entries WHERE {clause} LIMIT ?{limit_idx} OFFSET ?{offset_idx}"
         );
 
-        let mut binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
+        let mut binds: Vec<&dyn ToSql> =
+            escaped_terms.iter().map(|t| -> &dyn ToSql { t }).collect();
         binds.push(&limit);
         binds.push(&offset);
 
@@ -86,7 +94,7 @@ impl SearchAlgorithm for AllTerms {
         let clause = like_and_clause(escaped_terms.len());
         let sql = format!("SELECT COUNT(*) FROM entries WHERE {clause}");
 
-        let binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
+        let binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| -> &dyn ToSql { t }).collect();
         let c: u64 = conn.query_row(&sql, params_from_iter(binds), |r| r.get(0))?;
         Ok(c)
     }

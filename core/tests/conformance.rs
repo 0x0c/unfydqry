@@ -19,6 +19,9 @@
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::float_cmp,
+    clippy::let_underscore_must_use,
+    clippy::allow_attributes,
+    clippy::allow_attributes_without_reason,
     reason = "test code"
 )]
 
@@ -166,7 +169,10 @@ struct NormalizeCase {
     input: String,
     expected: String,
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "part of the spec schema; deserialized but not asserted here"
+    )]
     source: Option<String>,
     #[serde(default)]
     profile: Option<String>,
