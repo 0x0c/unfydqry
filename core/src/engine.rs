@@ -1231,6 +1231,22 @@ fn highlight_raw(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::float_cmp,
+        clippy::let_underscore_must_use,
+        clippy::manual_string_new,
+        reason = "test code"
+    )]
     use super::*;
     use crate::config::{NormalizeProfile, SearchStrategy};
 

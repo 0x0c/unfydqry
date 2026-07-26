@@ -55,3 +55,62 @@ codegen-units = 256
 # and it trims link time (and binary size). Override locally if you need to
 # profile a bench binary with symbols.
 strip = true
+
+# Gate 4 runtime backstop: overflow checks are on in debug by default but OFF in
+# release — turn them on so anything the compile-time lint can't see (e.g.
+# inlined generics from dependencies) traps instead of wrapping silently. The
+# mobile artifacts (cdylib/staticlib) are release builds, so this guards them.
+[profile.release]
+overflow-checks = true
+
+# --- Hardening gates (rust-hardening skill) ---------------------------------
+# Fail loudly at build time, never silently at runtime. Test code (#[cfg(test)],
+# tests/, benches/) is the exception and scopes its own #[allow(..., reason)].
+[lints.rust]
+# Gate 1 — every compiler warning is a hard error.
+warnings = "deny"
+# uniffi's scaffolding macros generate `unsafe` FFI code, so "deny" (NOT
+# "forbid": forbid can't be locally overridden). Any hand-written unsafe must
+# carry a #[allow(unsafe_code)] plus a // SAFETY: comment.
+unsafe_code = "deny"
+# Require an explicit `unsafe {}` block inside `unsafe fn` bodies.
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+# --- Gate 3: no hidden panics (all non-test code) ---
+unwrap_used        = "deny"   # .unwrap()
+expect_used        = "deny"   # .expect("…")
+panic              = "deny"   # panic!()
+unreachable        = "deny"   # unreachable!()
+todo               = "deny"   # todo!()
+unimplemented      = "deny"   # unimplemented!()
+indexing_slicing   = "deny"   # a[i] / &a[i..j] — panics on OOB; use .get()
+string_slice       = "deny"   # &s[a..b] — panics on a non-char boundary
+unwrap_in_result   = "deny"   # unwrap inside a fn returning Result
+
+# --- Gate 4: no silently-overflowing arithmetic ---
+arithmetic_side_effects = "deny"   # bans bare + - * / % << >> etc. on integers
+
+# --- Gate 5: propagate failures unless recovery fulfills the contract ---
+# Catches only `let _ = result;`. It does NOT catch `_ignored`, `.ok()`, default
+# substitution, ignored overflow flags, or logging-only handlers — review those
+# semantically.
+let_underscore_must_use = "deny"
+
+# --- Casts: ban `as`, force TryFrom/From so lossy/wrapping casts can't hide ---
+as_conversions           = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap       = "deny"
+cast_sign_loss           = "deny"
+cast_lossless            = "warn"
+
+# --- Float foot-guns ---
+float_cmp           = "deny"   # `==` on floats; compare against an epsilon
+lossy_float_literal = "deny"
+
+# --- Suppression hygiene — every allow/expect must justify itself ---
+allow_attributes              = "warn"   # nudge #[allow] -> #[expect]
+allow_attributes_without_reason = "deny"
+
+# --- Raise the floor (priority -1 so the specific denies above win) ---
+pedantic = { level = "warn", priority = -1 }
