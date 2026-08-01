@@ -1052,16 +1052,18 @@ impl SearchEngine {
             return Ok(0);
         }
         let hits = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.locked_conn()?;
             self.strategy.search(&conn, &q, u32::MAX)?
         };
         let bits = self.field_bits();
-        let capacity = hits.len().div_ceil(fields_per_record.max(1) as usize);
+        let per_record = usize::try_from(fields_per_record.max(1))
+            .map_err(|e| SearchError::Db(e.to_string()))?;
+        let capacity = hits.len().div_ceil(per_record);
         let mut seen = std::collections::HashSet::with_capacity(capacity);
         for h in &hits {
             seen.insert(h.id >> bits);
         }
-        Ok(seen.len() as u64)
+        Self::count_u64(seen.len())
     }
 
     /// Returns a single page of record-level search results (0-indexed).
@@ -1085,9 +1087,12 @@ impl SearchEngine {
             ))
         })?;
         let mut all = self.search_records(query, total_limit, fields_per_record)?;
-        let skip = (offset as usize).min(all.len());
+        let skip = usize::try_from(offset)
+            .map_err(|e| SearchError::Db(e.to_string()))?
+            .min(all.len());
         let mut page = all.split_off(skip);
-        page.truncate(per_page as usize);
+        let keep = usize::try_from(per_page).map_err(|e| SearchError::Db(e.to_string()))?;
+        page.truncate(keep);
         Ok(page)
     }
 
