@@ -12,6 +12,13 @@ use crate::engine::{Hit, SearchError};
 /// Classic Levenshtein distance (insert / delete / substitute), two-row DP.
 ///
 /// Returns `None` if the distance exceeds `max`, allowing early termination.
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "DP kernel: row/col indices run 1..=n / 1..=m over Vecs sized m+1, \
+              and every cell value is bounded by max(n, m) <= input length, so \
+              indices are in bounds and the usize additions cannot overflow"
+)]
 pub fn levenshtein(a: &[char], b: &[char], max: usize) -> Option<usize> {
     let (n, m) = (a.len(), b.len());
     // If the length difference alone exceeds the threshold, no need to compute.
@@ -48,6 +55,14 @@ pub fn levenshtein(a: &[char], b: &[char], max: usize) -> Option<usize> {
 ///
 /// Returns `None` if the distance exceeds `max`, allowing early termination.
 /// Uses a 3-row rolling buffer instead of a full 2D table (O(m) space).
+#[expect(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "DP kernel: indices run 1..=n / 1..=m (with i,j > 1 guards before \
+              the i-2 / j-2 accesses) over Vecs sized m+1, and cell values are \
+              bounded by max(n, m) <= input length, so all indexing is in bounds \
+              and the usize additions cannot overflow"
+)]
 pub fn osa(a: &[char], b: &[char], max: usize) -> Option<usize> {
     let (n, m) = (a.len(), b.len());
     if n.abs_diff(m) > max {
@@ -122,19 +137,40 @@ pub fn word_fuzzy_search(
             }
         }
         if let Some(best) = best {
-            hits.push(Hit {
-                id,
-                score: best as f64,
-            });
+            #[expect(
+                clippy::as_conversions,
+                reason = "edit distance is small; usize -> f64 for the score loses no meaningful precision"
+            )]
+            let score = best as f64;
+            hits.push(Hit { id, score });
         }
     }
     hits.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.id.cmp(&b.id)));
-    hits.truncate(limit as usize);
+    #[expect(
+        clippy::as_conversions,
+        reason = "a u32 limit always fits usize on supported (>= 32-bit) targets"
+    )]
+    let keep = limit as usize;
+    hits.truncate(keep);
     Ok(hits)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::float_cmp,
+        reason = "test code"
+    )]
     use super::*;
 
     fn chars(s: &str) -> Vec<char> {

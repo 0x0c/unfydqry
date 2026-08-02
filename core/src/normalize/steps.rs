@@ -89,8 +89,14 @@ pub fn strip_digit_grouping(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for (i, &c) in chars.iter().enumerate() {
         if c == ',' {
-            let prev_digit = i > 0 && chars[i - 1].is_ascii_digit();
-            let next_digit = chars.get(i + 1).is_some_and(|n| n.is_ascii_digit());
+            let prev_digit = i
+                .checked_sub(1)
+                .and_then(|p| chars.get(p))
+                .is_some_and(char::is_ascii_digit);
+            let next_digit = i
+                .checked_add(1)
+                .and_then(|n| chars.get(n))
+                .is_some_and(char::is_ascii_digit);
             if prev_digit && next_digit {
                 continue;
             }
@@ -119,11 +125,19 @@ pub fn collapse_whitespace(input: &str) -> String {
     out
 }
 
+#[expect(
+    clippy::as_conversions,
+    reason = "char -> u32 is lossless and From::from is not callable in const fn"
+)]
 const fn is_kana(c: char) -> bool {
     // Hiragana and Katakana blocks (covers small kana, ー, iteration marks).
     matches!(c as u32, 0x3041..=0x3096 | 0x309D..=0x309F | 0x30A1..=0x30FF)
 }
 
+#[expect(
+    clippy::as_conversions,
+    reason = "char -> u32 is lossless and From::from is not callable in const fn"
+)]
 const fn is_kanji(c: char) -> bool {
     matches!(c as u32,
         0x3400..=0x4DBF      // CJK Ext A
@@ -148,7 +162,12 @@ const fn is_dash(c: char) -> bool {
 /// returned unchanged.
 fn add_dakuten(c: char) -> char {
     if is_voiceable_kana(c) {
-        char::from_u32(c as u32 + 1).unwrap_or(c)
+        // The +1 offset stays inside the kana block, so `unwrap_or(c)` is only a
+        // formality that upholds the pass-through contract.
+        u32::from(c)
+            .checked_add(1)
+            .and_then(char::from_u32)
+            .unwrap_or(c)
     } else {
         c
     }

@@ -3,7 +3,24 @@
 //! No external RNG crate — uses a simple LCG and fixed word lists to produce
 //! reproducible Japanese text that exercises every normalization step.
 
-#![allow(unused)]
+#![allow(
+    unused,
+    reason = "shared bench helpers; not every helper is used by every bench"
+)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::float_cmp,
+    reason = "test code"
+)]
 
 /// Words chosen to exercise specific normalization steps:
 /// - Katakana (kana_fold): サーバー, データベース, カフェ, プログラム, ネットワーク

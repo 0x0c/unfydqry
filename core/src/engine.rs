@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -180,6 +180,22 @@ pub struct SearchEngine {
 }
 
 impl SearchEngine {
+    /// Locks the connection, converting a poisoned mutex (left by a prior panic
+    /// while a guard was held) into a `SearchError` so callers get an error
+    /// return instead of a panic unwinding across the FFI boundary.
+    fn locked_conn(&self) -> Result<MutexGuard<'_, Connection>, SearchError> {
+        self.conn
+            .lock()
+            .map_err(|_| SearchError::Db("connection mutex poisoned".to_string()))
+    }
+
+    /// Converts a `usize` count to the `u64` the FFI surface returns. Infallible
+    /// on all supported (<= 64-bit) targets, but propagated as an error rather
+    /// than truncating should `usize` ever be wider than `u64`.
+    fn count_u64(n: usize) -> Result<u64, SearchError> {
+        u64::try_from(n).map_err(|e| SearchError::Db(e.to_string()))
+    }
+
     /// Opens the connection and ensures the schema and migrations are in place.
     fn open_schema(db_path: &str) -> Result<Connection, SearchError> {
         let conn = Connection::open(db_path)?;
@@ -293,12 +309,26 @@ impl SearchEngine {
     }
 
     /// Decodes the field slot from a packed document id.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "field_bits is validated to 1..=62, so the shift and subtraction \
+                  cannot overflow; slots originate as u8 (validated < 1<<field_bits), \
+                  so masking to the low field_bits and narrowing to u8 is exact"
+    )]
     fn slot_of(&self, doc_id: i64) -> u8 {
         (doc_id & ((1i64 << self.field_bits()) - 1)) as u8
     }
 
     /// The inclusive packed-id range `[lo, hi]` owned by `record_id` under the
     /// active field-bits. `lo` is also the packed id of the record's slot 0.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "field_bits is validated to 1..=62, so the shift and subtraction \
+                  stay within i64"
+    )]
     fn record_id_range(&self, record_id: i64) -> (i64, i64) {
         let lo = record_id << self.field_bits();
         (lo, lo | ((1i64 << self.field_bits()) - 1))
@@ -385,22 +415,25 @@ impl SearchEngine {
         let mismatch = stored.as_deref().is_some_and(|s| s != requested);
 
         if mismatch && !rebuild {
-            return Err(SearchError::ConfigMismatch {
-                stored: stored.unwrap(),
-                requested,
-            });
+            // `mismatch` is only ever true when `stored` is `Some` (see above),
+            // so this binds the stored profile; the error branch preserves the
+            // invariant instead of unwrapping.
+            let stored = stored.ok_or_else(|| {
+                SearchError::Db("internal: profile mismatch without a stored profile".to_string())
+            })?;
+            return Err(SearchError::ConfigMismatch { stored, requested });
         }
 
         let engine = Self::assemble(conn, options, strategy, effective_bits);
         {
-            let conn = engine.conn.lock().unwrap();
+            let conn = engine.locked_conn()?;
             Self::stamp_field_bits(&conn, effective_bits)?;
         }
         if mismatch {
             // `reindex` re-normalizes from raw and stamps the new fingerprint.
             engine.reindex()?;
         } else {
-            let conn = engine.conn.lock().unwrap();
+            let conn = engine.locked_conn()?;
             Self::stamp_profile(&conn, &requested)?;
         }
         Ok(engine)
@@ -498,7 +531,7 @@ impl SearchEngine {
     /// Calling `index` again with an existing `id` overwrites that document.
     pub fn index(&self, id: i64, text: String) -> Result<(), SearchError> {
         let norm = self.normalizer.normalize(&text);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         conn.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
         conn.execute(
             "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
@@ -522,9 +555,12 @@ impl SearchEngine {
     /// re-feeding them. Documents indexed before raw text was retained have no
     /// raw to normalize and are skipped. Returns the number of documents
     /// regenerated.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
     pub fn reindex(&self) -> Result<u64, SearchError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let rows: Vec<(i64, String)> = {
             let mut stmt = conn.prepare("SELECT id, raw FROM entries WHERE raw IS NOT NULL")?;
             let mapped =
@@ -543,13 +579,13 @@ impl SearchEngine {
         }
         Self::stamp_profile(&tx, &self.options.fingerprint())?;
         tx.commit()?;
-        Ok(rows.len() as u64)
+        Self::count_u64(rows.len())
     }
 
     /// Removes the document stored under `id`. A no-op if no such document
     /// exists.
     pub fn remove(&self, id: i64) -> Result<(), SearchError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         conn.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
         conn.execute("DELETE FROM entries WHERE id=?1", params![id])?;
         drop(conn);
@@ -561,12 +597,15 @@ impl SearchEngine {
     /// Semantically equivalent to calling `index` for each `(id, text)` pair,
     /// but wraps all writes in one transaction for significantly better
     /// throughput on large batches. Returns the number of documents processed.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
     pub fn index_batch(&self, items: Vec<IndexItem>) -> Result<u64, SearchError> {
         if items.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let tx = conn.unchecked_transaction()?;
         for item in &items {
             let norm = self.normalizer.normalize(&item.text);
@@ -580,7 +619,7 @@ impl SearchEngine {
                 params![item.id, &norm, &item.text],
             )?;
         }
-        let count = items.len() as u64;
+        let count = Self::count_u64(items.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -590,18 +629,21 @@ impl SearchEngine {
     /// Semantically equivalent to calling `remove` for each id, but wraps all
     /// deletes in one transaction. Missing ids are silently skipped. Returns
     /// the number of ids processed.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
     pub fn remove_batch(&self, ids: Vec<i64>) -> Result<u64, SearchError> {
         if ids.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let tx = conn.unchecked_transaction()?;
         for id in &ids {
             tx.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
             tx.execute("DELETE FROM entries WHERE id=?1", params![id])?;
         }
-        let count = ids.len() as u64;
+        let count = Self::count_u64(ids.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -609,7 +651,7 @@ impl SearchEngine {
     /// Removes all documents from the index. Returns the number of documents
     /// removed.
     pub fn remove_all(&self) -> Result<u64, SearchError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let count: u64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
         let tx = conn.unchecked_transaction()?;
         tx.execute("DELETE FROM docs", [])?;
@@ -620,7 +662,7 @@ impl SearchEngine {
 
     /// Returns whether a document with the given `id` exists in the index.
     pub fn contains(&self, id: i64) -> Result<bool, SearchError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM entries WHERE id = ?1)",
             params![id],
@@ -643,7 +685,7 @@ impl SearchEngine {
             )));
         }
         let (lo, hi) = self.record_id_range(record_id);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM entries WHERE id BETWEEN ?1 AND ?2)",
             params![lo, hi],
@@ -663,7 +705,7 @@ impl SearchEngine {
         if q.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         self.strategy.search(&conn, &q, limit)
     }
 
@@ -685,13 +727,13 @@ impl SearchEngine {
         let offset = page.checked_mul(per_page).ok_or_else(|| {
             SearchError::Db(format!("page {page} * per_page {per_page} overflows u32"))
         })?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         self.strategy.search_paged(&conn, &q, per_page, offset)
     }
 
     /// Returns the total number of documents in the index.
     pub fn document_count(&self) -> Result<u64, SearchError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let c: u64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
         Ok(c)
     }
@@ -706,7 +748,7 @@ impl SearchEngine {
         if q.is_empty() {
             return Ok(0);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         self.strategy.match_count(&conn, &q)
     }
 
@@ -738,7 +780,7 @@ impl SearchEngine {
         // Fetch both forms under the lock, then release it before the Rust-side
         // string work.
         let fetched: Option<(String, Option<String>)> = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.locked_conn()?;
             conn.query_row(
                 "SELECT norm, raw FROM entries WHERE id = ?1",
                 params![id],
@@ -766,7 +808,10 @@ impl SearchEngine {
     /// existing `record_id` fully replaces its previous fields. `record_id`
     /// must be in `0..=2^(63-field_bits) - 1` and every `slot` must be
     /// `< 2^field_bits`, otherwise an error is returned and nothing is written.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
     pub fn index_record(&self, record_id: i64, fields: Vec<FieldValue>) -> Result<(), SearchError> {
         let bits = self.field_bits();
         if !(0..=self.max_record_id()).contains(&record_id) {
@@ -796,7 +841,7 @@ impl SearchEngine {
         }
 
         let (lo, hi) = self.record_id_range(record_id);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let tx = conn.unchecked_transaction()?;
         // Replace the record: clear its whole packed-id range, then insert the
         // non-empty fields. The range delete is slot-agnostic, so stale slots
@@ -828,7 +873,10 @@ impl SearchEngine {
     /// All-or-nothing: if any `record_id` or `slot` is invalid, no records are
     /// written and an error is returned. Returns the number of records
     /// processed.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
     pub fn index_records_batch(&self, records: Vec<RecordIndexItem>) -> Result<u64, SearchError> {
         if records.is_empty() {
             return Ok(0);
@@ -863,7 +911,7 @@ impl SearchEngine {
             }
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let tx = conn.unchecked_transaction()?;
         for r in &records {
             let (lo, hi) = self.record_id_range(r.record_id);
@@ -884,7 +932,7 @@ impl SearchEngine {
                 )?;
             }
         }
-        let count = records.len() as u64;
+        let count = Self::count_u64(records.len())?;
         tx.commit()?;
         Ok(count)
     }
@@ -898,7 +946,7 @@ impl SearchEngine {
             )));
         }
         let (lo, hi) = self.record_id_range(record_id);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         Self::clear_id_range(&conn, lo, hi)?;
         drop(conn);
         Ok(())
@@ -923,7 +971,7 @@ impl SearchEngine {
         }
         let raw_limit = limit.saturating_mul(fields_per_record.max(1));
         let hits = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.locked_conn()?;
             self.strategy.search(&conn, &q, raw_limit)?
         };
 
@@ -958,7 +1006,8 @@ impl SearchEngine {
                 .total_cmp(&b.score)
                 .then(a.record_id.cmp(&b.record_id))
         });
-        out.truncate(limit as usize);
+        let keep = usize::try_from(limit).map_err(|e| SearchError::Db(e.to_string()))?;
+        out.truncate(keep);
         Ok(out)
     }
 
@@ -1003,16 +1052,18 @@ impl SearchEngine {
             return Ok(0);
         }
         let hits = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.locked_conn()?;
             self.strategy.search(&conn, &q, u32::MAX)?
         };
         let bits = self.field_bits();
-        let capacity = hits.len().div_ceil(fields_per_record.max(1) as usize);
+        let per_record = usize::try_from(fields_per_record.max(1))
+            .map_err(|e| SearchError::Db(e.to_string()))?;
+        let capacity = hits.len().div_ceil(per_record);
         let mut seen = std::collections::HashSet::with_capacity(capacity);
         for h in &hits {
             seen.insert(h.id >> bits);
         }
-        Ok(seen.len() as u64)
+        Self::count_u64(seen.len())
     }
 
     /// Returns a single page of record-level search results (0-indexed).
@@ -1036,9 +1087,12 @@ impl SearchEngine {
             ))
         })?;
         let mut all = self.search_records(query, total_limit, fields_per_record)?;
-        let skip = (offset as usize).min(all.len());
+        let skip = usize::try_from(offset)
+            .map_err(|e| SearchError::Db(e.to_string()))?
+            .min(all.len());
         let mut page = all.split_off(skip);
-        page.truncate(per_page as usize);
+        let keep = usize::try_from(per_page).map_err(|e| SearchError::Db(e.to_string()))?;
+        page.truncate(keep);
         Ok(page)
     }
 
@@ -1049,10 +1103,18 @@ impl SearchEngine {
     /// All-or-nothing: if any stored slot or record id would not fit under
     /// `new_field_bits` (or a stored id is negative, i.e. not produced by the
     /// record-layer API), the index is left untouched and an error is returned.
-    #[allow(clippy::significant_drop_tightening)] // tx borrows conn; cannot drop early
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "tx borrows conn; the guard cannot be dropped early"
+    )]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "old and new_field_bits are validated to 1..=62, so the mask shift \
+                  and subtraction stay within i64"
+    )]
     pub fn change_field_bits(&self, new_field_bits: u8) -> Result<u64, SearchError> {
         Self::check_field_bits(new_field_bits)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.locked_conn()?;
         let old = self.field_bits();
         if new_field_bits == old {
             return Ok(0);
@@ -1113,13 +1175,20 @@ impl SearchEngine {
         Self::stamp_field_bits(&tx, new_field_bits)?;
         tx.commit()?;
         self.field_bits.store(new_field_bits, Ordering::Relaxed);
-        Ok(rows.len() as u64)
+        Self::count_u64(rows.len())
     }
 }
 
 /// Wraps every non-overlapping occurrence of `needle` in `haystack` with
 /// `before`/`after` markers.  Returns a `String` equal to `haystack` when
 /// `needle` is not found.
+#[expect(
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    reason = "prev_end and pos are byte offsets returned by match_indices, so they \
+              are valid char boundaries with prev_end <= pos <= haystack.len(); the \
+              offset addition is bounded by haystack.len() and cannot overflow"
+)]
 fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str) -> String {
     if needle.is_empty() {
         return haystack.to_string();
@@ -1130,8 +1199,12 @@ fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str
         return haystack.to_string();
     }
 
-    let extra = matches.len() * (before.len() + after.len());
-    let mut out = String::with_capacity(haystack.len() + extra);
+    // Capacity is a hint; saturate so a pathological input can't overflow (worst
+    // case is a later re-allocation).
+    let extra = matches
+        .len()
+        .saturating_mul(before.len().saturating_add(after.len()));
+    let mut out = String::with_capacity(haystack.len().saturating_add(extra));
     let mut prev_end = 0;
     for (pos, matched) in matches {
         out.push_str(&haystack[prev_end..pos]);
@@ -1159,6 +1232,16 @@ fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str
 /// position (O(k) calls where k ≤ n = chars in raw; O(n) worst case when the
 /// match is near the end). Each match boundary is resolved via binary search
 /// in O(log n).
+#[expect(
+    clippy::string_slice,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "all byte offsets come from match_indices / char_indices (valid char \
+              boundaries bounded by raw.len() / norm.len()); bounds is seeded with one \
+              entry so bounds.len() >= 1, and every index is guarded (idx == 0 / \
+              idx >= bounds.len()) or derived from partition_point, so slicing and \
+              indexing are in bounds and the offset arithmetic cannot overflow"
+)]
 fn highlight_raw(
     raw: &str,
     norm: &str,
@@ -1213,8 +1296,11 @@ fn highlight_raw(
         }
     };
 
-    let extra = ranges.len() * (before.len() + after.len());
-    let mut out = String::with_capacity(raw.len() + extra);
+    // Capacity is a hint; saturate so a pathological input can't overflow.
+    let extra = ranges
+        .len()
+        .saturating_mul(before.len().saturating_add(after.len()));
+    let mut out = String::with_capacity(raw.len().saturating_add(extra));
     let mut prev_end = 0;
     for (ns, ne) in ranges {
         let rs = start_for(ns).max(prev_end);
@@ -1231,12 +1317,49 @@ fn highlight_raw(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::string_slice,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::float_cmp,
+        clippy::let_underscore_must_use,
+        clippy::manual_string_new,
+        reason = "test code"
+    )]
     use super::*;
     use crate::config::{NormalizeProfile, SearchStrategy};
 
     fn fresh() -> Arc<SearchEngine> {
         // In-memory DB (independent per test).
         SearchEngine::new(":memory:".to_string()).expect("open")
+    }
+
+    #[test]
+    fn poisoned_connection_surfaces_error_instead_of_panicking() {
+        let engine = fresh();
+        // Poison the connection mutex: a thread panics while holding the guard.
+        let other = Arc::clone(&engine);
+        let joined = std::thread::spawn(move || {
+            let _guard = other.conn.lock().expect("lock");
+            panic!("intentional panic to poison the mutex");
+        })
+        .join();
+        assert!(joined.is_err(), "the spawned thread should have panicked");
+
+        // A subsequent operation must return a typed error, not panic across
+        // the FFI boundary.
+        let result = engine.search("anything".to_string(), 10);
+        assert!(
+            matches!(result, Err(SearchError::Db(_))),
+            "expected SearchError::Db, got {result:?}"
+        );
     }
 
     // Behavioural coverage — normalization profiles, every search strategy,

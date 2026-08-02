@@ -27,7 +27,9 @@ fn trigrams(chars: &[char]) -> HashSet<[char; 3]> {
         return set;
     }
     for w in chars.windows(3) {
-        set.insert([w[0], w[1], w[2]]);
+        if let [a, b, c] = w {
+            set.insert([*a, *b, *c]);
+        }
     }
     set
 }
@@ -39,6 +41,13 @@ fn exact_match_similarity(query: &str, doc: &str) -> f64 {
     if query == doc { 1.0 } else { 0.0 }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "union = |A| + |B| - |A n B|; inter <= min(|A|, |B|) and set sizes are \
+              bounded by memory, so the usize add/sub cannot overflow or underflow. \
+              The usize -> f64 ratio is the Jaccard score, where precision loss is irrelevant"
+)]
 fn jaccard(a: &HashSet<[char; 3]>, b: &HashSet<[char; 3]>) -> f64 {
     let inter = a.intersection(b).count();
     let union = a.len() + b.len() - inter;
@@ -53,7 +62,12 @@ fn jaccard(a: &HashSet<[char; 3]>, b: &HashSet<[char; 3]>) -> f64 {
 /// deterministic output, then truncates to `limit`.
 fn rank_and_truncate(hits: &mut Vec<Hit>, limit: u32) {
     hits.sort_by(|a, b| a.score.total_cmp(&b.score).then(a.id.cmp(&b.id)));
-    hits.truncate(limit as usize);
+    #[expect(
+        clippy::as_conversions,
+        reason = "a u32 limit always fits usize on supported (>= 32-bit) targets"
+    )]
+    let keep = limit as usize;
+    hits.truncate(keep);
 }
 
 /// Builds an FTS5 MATCH expression that ORs all trigrams as phrase queries.
@@ -111,7 +125,11 @@ impl SearchAlgorithm for FuzzyTrigram {
         // 3+ char queries: use trigram sets. Reuse q_chars to avoid a second
         // chars().collect() inside trigrams().
         let qset = trigrams(&q_chars);
-        let match_expr = build_fts5_or(&qset).expect("3+ char query always produces trigrams");
+        // A 3+ char query always yields at least one trigram, so `build_fts5_or`
+        // returns `Some`; surface the invariant as an error rather than panicking.
+        let match_expr = build_fts5_or(&qset).ok_or_else(|| {
+            SearchError::Db("internal: 3+ char query produced no trigrams".to_string())
+        })?;
         let mut stmt = conn.prepare("SELECT rowid, norm FROM docs WHERE docs MATCH ?1")?;
         let rows = stmt.query_map(params![match_expr], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))

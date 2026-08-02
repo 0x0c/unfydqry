@@ -7,6 +7,23 @@
 //!
 //! Layout assumption: this file lives at `core/tests/conformance.rs` and
 //! `spec/` is its sibling at the workspace root (`../spec/`).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::float_cmp,
+    clippy::let_underscore_must_use,
+    clippy::allow_attributes,
+    clippy::allow_attributes_without_reason,
+    reason = "test code"
+)]
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -152,7 +169,10 @@ struct NormalizeCase {
     input: String,
     expected: String,
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "part of the spec schema; deserialized but not asserted here"
+    )]
     source: Option<String>,
     #[serde(default)]
     profile: Option<String>,
