@@ -123,7 +123,10 @@ pub fn range_upper_bound(s: &str) -> Option<String> {
 ///
 /// Shared by the Prefix strategy (`col = "norm"`) and the Suffix strategy
 /// (`col = "norm_rev"`, with a reversed key), giving both an O(log n) seek.
-pub fn range_query(
+///
+/// Kept module-private: `col`/`extra_sql` are interpolated into the SQL, so
+/// only the sibling strategy modules that pass hard-coded literals may call it.
+fn range_query(
     conn: &Connection,
     col: &str,
     key: &str,
@@ -160,7 +163,8 @@ pub fn range_query(
 }
 
 /// Counts the rows a [`range_query`] would match, via `SELECT COUNT(*)`.
-pub fn range_count(
+/// Module-private for the same SQL-interpolation reason as [`range_query`].
+fn range_count(
     conn: &Connection,
     col: &str,
     key: &str,

@@ -248,14 +248,19 @@ impl SearchEngine {
 
     /// Populates `norm_rev` for every existing row from its stored `norm`.
     /// One-time migration for indexes built before the suffix range index.
+    ///
+    /// The read and the updates run in a single transaction so the backfill is
+    /// atomic. Rows are collected before updating because SQLite leaves results
+    /// undefined if a table is modified while a `SELECT` over it is still
+    /// stepping — the same materialize-then-write pattern as `reindex`.
     fn backfill_norm_rev(conn: &Connection) -> Result<(), SearchError> {
+        let tx = conn.unchecked_transaction()?;
         let rows: Vec<(i64, String)> = {
-            let mut stmt = conn.prepare("SELECT id, norm FROM entries")?;
+            let mut stmt = tx.prepare("SELECT id, norm FROM entries")?;
             let mapped =
                 stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
             mapped.collect::<Result<Vec<_>, _>>()?
         };
-        let tx = conn.unchecked_transaction()?;
         for (id, norm) in &rows {
             tx.execute(
                 "UPDATE entries SET norm_rev=?2 WHERE id=?1",
