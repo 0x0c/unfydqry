@@ -26,9 +26,9 @@ dependencies {
     // The only compile-time dependency required by the generated binding.
     // At runtime, JNA is pulled in by :app's `jna:5.14.0@aar` on Android (which bundles
     // libjnidispatch.so) and by the testImplementation entry below for JVM unit tests.
-    compileOnly("net.java.dev.jna:jna:5.14.0")
+    compileOnly("net.java.dev.jna:jna:5.19.1")
 
-    testImplementation("net.java.dev.jna:jna:5.14.0")
+    testImplementation("net.java.dev.jna:jna:5.19.1")
     testImplementation(platform("org.junit:junit-bom:5.11.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

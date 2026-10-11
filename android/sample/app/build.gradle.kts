@@ -46,5 +46,5 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     // JNA's native dispatch part (libjnidispatch.so) is only delivered via the AAR.
     // :unifiedquery is distributed as a jar, so on Android the :app side must add this AAR.
-    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
 }
