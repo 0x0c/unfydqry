@@ -6,4 +6,4 @@
 # 0.1.3 depends only on canonical mkdocs. Revisit if the ecosystem settles.
 mkdocs>=1.6,<2
 mkdocs-material>=9.5,<10
-mkdocs-same-dir==0.1.3
+mkdocs-same-dir==0.1.5
