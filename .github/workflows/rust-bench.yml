@@ -91,7 +91,7 @@ jobs:
         run: cargo bench $BENCHES -- --save-baseline pr $CRITERION_ARGS
 
       - name: Upload PR baseline
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: criterion-pr
           path: core/target/criterion
@@ -147,7 +147,7 @@ jobs:
         run: cargo bench $BENCHES -- --save-baseline base $CRITERION_ARGS
 
       - name: Upload base baseline
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: criterion-base
           path: core/target/criterion
@@ -211,7 +211,7 @@ jobs:
         run: echo "${{ github.event.pull_request.number }}" > "$RUNNER_TEMP/pr-number.txt"
 
       - name: Upload report artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bench-report
           path: |
