@@ -8,7 +8,7 @@ use crate::config::{
     DEFAULT_FIELD_BITS, EngineConfig, EngineOptionsConfig, NormalizeOptions, SearchStrategy,
 };
 use crate::normalize::{Normalizer, build_normalizer_options};
-use crate::search::{SearchAlgorithm, build_strategy};
+use crate::search::{SearchAlgorithm, build_strategy, reverse_chars};
 
 /// Upper bound for `field_bits`: a packed id needs at least one bit for the
 /// record id and must stay non-negative (the sign bit is reserved), so at most
@@ -204,7 +204,7 @@ impl SearchEngine {
             "CREATE VIRTUAL TABLE IF NOT EXISTS docs
                  USING fts5(norm, tokenize='trigram');
              CREATE TABLE IF NOT EXISTS entries(
-                 id INTEGER PRIMARY KEY, norm TEXT NOT NULL, raw TEXT);
+                 id INTEGER PRIMARY KEY, norm TEXT NOT NULL, norm_rev TEXT, raw TEXT);
              CREATE INDEX IF NOT EXISTS idx_entries_norm ON entries(norm);
              CREATE TABLE IF NOT EXISTS meta(
                  key TEXT PRIMARY KEY, value TEXT NOT NULL);",
@@ -215,23 +215,60 @@ impl SearchEngine {
             [],
         )?;
         // Migrate indexes created before raw text was retained.
-        if !Self::entries_has_raw(&conn)? {
+        if !Self::entries_has_column(&conn, "raw")? {
             conn.execute("ALTER TABLE entries ADD COLUMN raw TEXT", [])?;
         }
+        // Migrate indexes created before the reversed-norm suffix index. The
+        // column is backfilled in Rust because reversing by Unicode scalar is
+        // not expressible in SQLite SQL. The index is created afterwards so it
+        // never references a missing column on an older schema.
+        if !Self::entries_has_column(&conn, "norm_rev")? {
+            conn.execute("ALTER TABLE entries ADD COLUMN norm_rev TEXT", [])?;
+            Self::backfill_norm_rev(&conn)?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_norm_rev ON entries(norm_rev)",
+            [],
+        )?;
         Ok(conn)
     }
 
-    /// Whether the `entries` table already has the `raw` column.
-    fn entries_has_raw(conn: &Connection) -> Result<bool, SearchError> {
+    /// Whether the `entries` table already has a column named `column`.
+    fn entries_has_column(conn: &Connection, column: &str) -> Result<bool, SearchError> {
         let mut stmt = conn.prepare("PRAGMA table_info(entries)")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let name: String = row.get(1)?;
-            if name == "raw" {
+            if name == column {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Populates `norm_rev` for every existing row from its stored `norm`.
+    /// One-time migration for indexes built before the suffix range index.
+    ///
+    /// The read and the updates run in a single transaction so the backfill is
+    /// atomic. Rows are collected before updating because SQLite leaves results
+    /// undefined if a table is modified while a `SELECT` over it is still
+    /// stepping — the same materialize-then-write pattern as `reindex`.
+    fn backfill_norm_rev(conn: &Connection) -> Result<(), SearchError> {
+        let tx = conn.unchecked_transaction()?;
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare("SELECT id, norm FROM entries")?;
+            let mapped =
+                stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+            mapped.collect::<Result<Vec<_>, _>>()?
+        };
+        for (id, norm) in &rows {
+            tx.execute(
+                "UPDATE entries SET norm_rev=?2 WHERE id=?1",
+                params![id, reverse_chars(norm)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// The normalize profile recorded in the index, if any documents exist.
@@ -539,9 +576,10 @@ impl SearchEngine {
         )?;
         // The raw text is retained alongside `norm` so the index can be
         // regenerated under a different profile without the host re-feeding it.
+        // `norm_rev` mirrors `norm` reversed for the suffix range index.
         conn.execute(
-            "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
-            params![id, &norm, &text],
+            "INSERT OR REPLACE INTO entries(id, norm, norm_rev, raw) VALUES (?1, ?2, ?3, ?4)",
+            params![id, &norm, reverse_chars(&norm), &text],
         )?;
         drop(conn);
         Ok(())
@@ -570,7 +608,10 @@ impl SearchEngine {
         let tx = conn.unchecked_transaction()?;
         for (id, raw) in &rows {
             let norm = self.normalizer.normalize(raw);
-            tx.execute("UPDATE entries SET norm=?2 WHERE id=?1", params![id, &norm])?;
+            tx.execute(
+                "UPDATE entries SET norm=?2, norm_rev=?3 WHERE id=?1",
+                params![id, &norm, reverse_chars(&norm)],
+            )?;
             tx.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
             tx.execute(
                 "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
@@ -615,8 +656,8 @@ impl SearchEngine {
                 params![item.id, &norm],
             )?;
             tx.execute(
-                "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
-                params![item.id, &norm, &item.text],
+                "INSERT OR REPLACE INTO entries(id, norm, norm_rev, raw) VALUES (?1, ?2, ?3, ?4)",
+                params![item.id, &norm, reverse_chars(&norm), &item.text],
             )?;
         }
         let count = Self::count_u64(items.len())?;
@@ -858,8 +899,8 @@ impl SearchEngine {
                 params![id, &norm],
             )?;
             tx.execute(
-                "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
-                params![id, &norm, &f.text],
+                "INSERT OR REPLACE INTO entries(id, norm, norm_rev, raw) VALUES (?1, ?2, ?3, ?4)",
+                params![id, &norm, reverse_chars(&norm), &f.text],
             )?;
         }
         tx.commit()?;
@@ -927,8 +968,8 @@ impl SearchEngine {
                     params![id, &norm],
                 )?;
                 tx.execute(
-                    "INSERT OR REPLACE INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
-                    params![id, &norm, &f.text],
+                    "INSERT OR REPLACE INTO entries(id, norm, norm_rev, raw) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, &norm, reverse_chars(&norm), &f.text],
                 )?;
             }
         }
@@ -1168,8 +1209,8 @@ impl SearchEngine {
                 params![new_id, norm],
             )?;
             tx.execute(
-                "INSERT INTO entries(id, norm, raw) VALUES (?1, ?2, ?3)",
-                params![new_id, norm, raw],
+                "INSERT INTO entries(id, norm, norm_rev, raw) VALUES (?1, ?2, ?3, ?4)",
+                params![new_id, norm, reverse_chars(norm), raw],
             )?;
         }
         Self::stamp_field_bits(&tx, new_field_bits)?;
@@ -1661,6 +1702,234 @@ mod tests {
             "suffix: '_' should only match literal '_' suffix"
         );
         assert_eq!(hits[0].id, 1);
+    }
+
+    // --- substring / suffix index equivalence ---
+    //
+    // These lock the externally-observable result set of the Substring strategy
+    // (FTS5 trigram index) and the Suffix strategy (reversed-norm B-tree range
+    // scan) so it stays identical to the original full LIKE scan. The decisive
+    // suffix cases are the ones the range scan must still exclude: a doc
+    // containing the query in the middle or as a prefix is not a suffix match.
+
+    #[test]
+    fn substring_matches_regardless_of_position() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "abcdef".into()).unwrap(); // prefix
+        e.index(2, "xyzabcqqq".into()).unwrap(); // middle
+        e.index(3, "qqqabc".into()).unwrap(); // suffix
+        e.index(4, "nothing".into()).unwrap(); // no match
+
+        let mut ids: Vec<i64> = e
+            .search("abc".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn substring_matches_japanese_in_the_middle() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "とうきょうと".into()).unwrap(); // contains きょう mid-string
+        e.index(2, "きょう".into()).unwrap(); // exact
+        e.index(3, "おおさか".into()).unwrap(); // no match
+
+        let mut ids: Vec<i64> = e
+            .search("きょう".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn substring_short_query_still_matches() {
+        // 1- and 2-char queries fall outside the trigram index and must keep
+        // matching via the LIKE fallback.
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "xyzab".into()).unwrap();
+        e.index(2, "abxyz".into()).unwrap();
+        e.index(3, "zzz".into()).unwrap();
+
+        let mut ids: Vec<i64> = e
+            .search("ab".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn suffix_excludes_non_trailing_matches() {
+        // "abc" appears in every doc, but only trailing occurrences count.
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "qqqabc".into()).unwrap(); // suffix — match
+        e.index(2, "abcqqq".into()).unwrap(); // prefix — reject
+        e.index(3, "qabcq".into()).unwrap(); // middle — reject
+
+        let mut ids: Vec<i64> = e
+            .search("abc".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn suffix_short_query_matches() {
+        // The reversed-norm range scan has no minimum query length, so 1- and
+        // 2-char suffixes match directly (no LIKE fallback).
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "とうきょう".into()).unwrap(); // ends う
+        e.index(2, "おおさか".into()).unwrap(); // ends か
+        e.index(3, "さっぽろう".into()).unwrap(); // ends う
+
+        let mut ids: Vec<i64> = e
+            .search("う".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn suffix_excludes_non_trailing_matches_japanese() {
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "とうきょう".into()).unwrap(); // ends with きょう — match
+        e.index(2, "きょうと".into()).unwrap(); // starts with きょう — reject
+        e.index(3, "おおさか".into()).unwrap(); // no match
+
+        let ids: Vec<i64> = e
+            .search("きょう".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn substring_match_count_uses_trigram_query() {
+        let e = engine_with(SearchStrategy::Substring);
+        e.index(1, "abcdef".into()).unwrap();
+        e.index(2, "xyzabc".into()).unwrap();
+        e.index(3, "ab c".into()).unwrap(); // no contiguous "abc"
+        e.index(4, "nothing".into()).unwrap();
+
+        assert_eq!(e.match_count("abc".into()).unwrap(), 2);
+    }
+
+    #[test]
+    fn suffix_match_count_excludes_non_trailing() {
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "qqqabc".into()).unwrap(); // suffix
+        e.index(2, "abcqqq".into()).unwrap(); // prefix — not a suffix
+        e.index(3, "qabcq".into()).unwrap(); // middle — not a suffix
+
+        assert_eq!(e.match_count("abc".into()).unwrap(), 1);
+    }
+
+    #[test]
+    fn substring_search_page_paginates_trigram_hits() {
+        let e = engine_with(SearchStrategy::Substring);
+        for i in 1..=5 {
+            e.index(i, format!("abc{i}")).unwrap();
+        }
+
+        let page0 = e.search_page("abc".into(), 3, 0).unwrap();
+        let page1 = e.search_page("abc".into(), 3, 1).unwrap();
+
+        let ids0: Vec<i64> = page0.iter().map(|h| h.id).collect();
+        let ids1: Vec<i64> = page1.iter().map(|h| h.id).collect();
+        assert_eq!(ids0, vec![1, 2, 3]);
+        assert_eq!(ids1, vec![4, 5]);
+    }
+
+    #[test]
+    fn suffix_works_after_migrating_pre_norm_rev_index() {
+        // An index created before the norm_rev column must be backfilled on open
+        // so the Suffix range scan can find its documents.
+        use rusqlite::Connection;
+
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("unfydqry_migrate_{}.sqlite", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.to_string_lossy()));
+        }
+        let p = path.to_string_lossy().to_string();
+
+        // Build the old schema by hand: entries has no norm_rev column.
+        {
+            let conn = Connection::open(&p).expect("open raw");
+            conn.execute_batch(
+                "CREATE VIRTUAL TABLE docs USING fts5(norm, tokenize='trigram');
+                 CREATE TABLE entries(id INTEGER PRIMARY KEY, norm TEXT NOT NULL, raw TEXT);
+                 CREATE INDEX idx_entries_norm ON entries(norm);
+                 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta(key, value) VALUES ('index_version', '1');",
+            )
+            .expect("old schema");
+            conn.execute("INSERT INTO docs(rowid, norm) VALUES (1, 'とうきょう')", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO entries(id, norm, raw) VALUES (1, 'とうきょう', 'とうきょう')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Opening the engine runs the norm_rev migration + backfill.
+        let e = SearchEngine::with_config(
+            p.clone(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy: SearchStrategy::Suffix,
+                field_bits: None,
+            },
+        )
+        .expect("open + migrate");
+
+        let ids: Vec<i64> = e
+            .search("きょう".into(), 10)
+            .unwrap()
+            .iter()
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(ids, vec![1], "backfilled suffix search must find the doc");
+
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.to_string_lossy()));
+        }
+    }
+
+    #[test]
+    fn suffix_search_page_paginates_hits() {
+        let e = engine_with(SearchStrategy::Suffix);
+        for i in 1..=5 {
+            e.index(i, format!("doc{i}xyz")).unwrap();
+        }
+
+        let page0 = e.search_page("xyz".into(), 3, 0).unwrap();
+        let page1 = e.search_page("xyz".into(), 3, 1).unwrap();
+
+        // Pages must partition the 5 matches with no overlap or loss.
+        let mut all: Vec<i64> = page0.iter().chain(page1.iter()).map(|h| h.id).collect();
+        assert_eq!(page0.len(), 3);
+        assert_eq!(page1.len(), 2);
+        all.sort();
+        all.dedup();
+        assert_eq!(all, vec![1, 2, 3, 4, 5]);
     }
 
     // --- record-layer API (index_record / search_records / change_field_bits) ---

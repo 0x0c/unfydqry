@@ -1,24 +1,24 @@
-//! Suffix match (`LIKE '%q'`) for every query.
+//! Suffix match via B-tree range scan on `entries.norm_rev`.
+//!
+//! `norm_rev` stores each document's `norm` reversed by Unicode scalar. Because
+//! `s.ends_with(q)` iff `reverse_chars(s).starts_with(reverse_chars(q))`, a
+//! suffix match becomes a prefix range scan on `norm_rev` — the exact same
+//! O(log n) technique the Prefix strategy uses on `norm`, with no minimum query
+//! length and no `LIKE` wildcard handling.
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 
-use super::{SearchAlgorithm, escape_like};
+use super::{SearchAlgorithm, range_count, range_query, range_upper_bound, reverse_chars};
 use crate::engine::{Hit, SearchError};
 
 pub struct Suffix;
 
 impl SearchAlgorithm for Suffix {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
-        let escaped = escape_like(q);
-        let mut stmt =
-            conn.prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1 ESCAPE '\\' LIMIT ?2")?;
-        let rows = stmt.query_map(params![escaped, limit], |r| {
-            Ok(Hit {
-                id: r.get(0)?,
-                score: 0.0,
-            })
-        })?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let rq = reverse_chars(q);
+        let upper = range_upper_bound(&rq);
+        let params: [&dyn rusqlite::ToSql; 1] = [&limit];
+        range_query(conn, "norm_rev", &rq, &upper, "LIMIT ?", &params)
     }
 
     fn search_paged(
@@ -28,26 +28,15 @@ impl SearchAlgorithm for Suffix {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Hit>, SearchError> {
-        let escaped = escape_like(q);
-        let mut stmt = conn.prepare(
-            "SELECT id FROM entries WHERE norm LIKE '%'||?1 ESCAPE '\\' LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = stmt.query_map(params![escaped, limit, offset], |r| {
-            Ok(Hit {
-                id: r.get(0)?,
-                score: 0.0,
-            })
-        })?;
-        Ok(rows.filter_map(Result::ok).collect())
+        let rq = reverse_chars(q);
+        let upper = range_upper_bound(&rq);
+        let params: [&dyn rusqlite::ToSql; 2] = [&limit, &offset];
+        range_query(conn, "norm_rev", &rq, &upper, "LIMIT ? OFFSET ?", &params)
     }
 
     fn match_count(&self, conn: &Connection, q: &str) -> Result<u64, SearchError> {
-        let escaped = escape_like(q);
-        let c: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM entries WHERE norm LIKE '%'||?1 ESCAPE '\\'",
-            params![escaped],
-            |r| r.get(0),
-        )?;
-        Ok(c)
+        let rq = reverse_chars(q);
+        let upper = range_upper_bound(&rq);
+        range_count(conn, "norm_rev", &rq, &upper)
     }
 }
