@@ -34,7 +34,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     // Used by the spec JSON loader. Jackson's Kotlin module decodes straight into
     // data classes without having to pull in the kotlinx.serialization plugin.
-    testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
+    testImplementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.22.4")
 }
 
 tasks.test {
