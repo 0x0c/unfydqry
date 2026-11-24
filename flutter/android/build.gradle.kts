@@ -40,6 +40,6 @@ kotlin {
 
 dependencies {
     // JNA is required by the UniFFI generated binding at both compile- and run-time.
-    compileOnly("net.java.dev.jna:jna:5.14.0")
-    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    compileOnly("net.java.dev.jna:jna:5.19.1")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
 }
