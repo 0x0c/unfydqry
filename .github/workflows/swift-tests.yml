@@ -49,7 +49,7 @@ jobs:
           swift --version
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: stable
           targets: aarch64-apple-darwin
