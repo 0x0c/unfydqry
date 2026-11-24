@@ -47,7 +47,7 @@ dependencies {
     // JNA is required at runtime by the generated binding; the @aar variant
     // additionally ships libjnidispatch.so for every Android ABI, so consumers
     // get a working setup with a single dependency.
-    api("net.java.dev.jna:jna:5.14.0@aar")
+    api("net.java.dev.jna:jna:5.19.1@aar")
 }
 
 mavenPublishing {
